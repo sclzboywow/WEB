@@ -6,7 +6,7 @@
 """
 
 import sqlite3
-from fastapi import APIRouter, Query, Depends, HTTPException
+from fastapi import APIRouter, Query, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from typing import Dict, Any, Optional
 
@@ -108,18 +108,52 @@ async def api_wallet_info(user: Dict[str, Any] = Depends(get_current_user)):
 
 # 提现申请
 @router.post("/payouts")
-async def api_payouts_create(payload: Dict[str, Any], user: Dict[str, Any] = Depends(get_current_user)):
+async def api_payouts_create(request: Request, user: Dict[str, Any] = Depends(get_current_user)):
     """创建提现申请"""
     user_id = user.get("user_id")
+    payload: Dict[str, Any] = {}
+    try:
+        payload = await request.json()
+    except Exception:
+        try:
+            form = await request.form()
+            payload = {k: form.get(k) for k in form.keys()}
+        except Exception:
+            payload = {}
+
     amount_cents = payload.get("amount_cents")
     method = payload.get("method")
     account_info = payload.get("account_info")
     remark = payload.get("remark", "")
+    try:
+        print(f"[payouts.create] user_id={user_id} payload={{'amount_cents':{amount_cents},'method':{method},'account_info':{account_info},'remark':{remark}}}")
+    except Exception:
+        pass
     
-    if not all([user_id, amount_cents, method, account_info]):
-        return JSONResponse({"status": "error", "message": "missing parameters"}, status_code=400)
+    if not user_id:
+        print("[payouts.create] error: unauthorized: missing user")
+        return JSONResponse({"status": "error", "message": "unauthorized: missing user"}, status_code=401)
+    if method is None or method == "":
+        print("[payouts.create] error: missing parameter: method")
+        return JSONResponse({"status": "error", "message": "missing parameter: method"}, status_code=400)
+    if account_info is None or str(account_info).strip() == "":
+        print("[payouts.create] error: missing parameter: account_info")
+        return JSONResponse({"status": "error", "message": "missing parameter: account_info"}, status_code=400)
+    try:
+        amount_cents = int(amount_cents)
+    except Exception:
+        print("[payouts.create] error: invalid amount_cents")
+        return JSONResponse({"status": "error", "message": "invalid amount_cents"}, status_code=400)
+    if amount_cents < 1:
+        print("[payouts.create] error: amount must be at least 1 cent")
+        return JSONResponse({"status": "error", "message": "amount must be at least 1 cent"}, status_code=400)
     
     resp = create_payout_request(user_id, amount_cents, method, account_info, remark)
+    if resp.get("status") != "success":
+        try:
+            print(f"[payouts.create] service_error: {resp}")
+        except Exception:
+            pass
     status_code = 200 if resp.get("status") == "success" else 400
     return JSONResponse(resp, status_code=status_code)
 

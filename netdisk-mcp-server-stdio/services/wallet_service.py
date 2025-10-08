@@ -215,56 +215,63 @@ def create_payout_request(user_id: str, amount_cents: int, method: str,
     
     try:
         conn.execute('BEGIN TRANSACTION')
-        
+
         # 检查用户钱包余额
         cursor.execute('''
             SELECT balance_cents FROM user_wallets WHERE user_id = ?
         ''', (user_id,))
-        
+
         wallet_row = cursor.fetchone()
         if not wallet_row:
-            return {"status": "error", "message": "wallet not found"}
-        
-        balance_cents = wallet_row[0]
-        
+            # 自动创建钱包，默认余额为 0，提升用户体验
+            cursor.execute('''
+                INSERT INTO user_wallets (user_id, balance_cents, pending_settlement_cents)
+                VALUES (?, 0, 0)
+            ''', (user_id,))
+            conn.commit()
+            balance_cents = 0
+        else:
+            balance_cents = wallet_row[0]
+
+        # 校验余额是否足额
         if balance_cents < amount_cents:
             return {
-                "status": "error", 
+                "status": "error",
                 "message": f"余额不足，当前余额 {balance_cents/100:.2f}元，申请提现 {amount_cents/100:.2f}元"
             }
-        
+
         # 创建提现申请
         cursor.execute('''
             INSERT INTO payout_requests (user_id, amount_cents, status, method, account_info, remark)
             VALUES (?, ?, 'pending', ?, ?, ?)
         ''', (user_id, amount_cents, method, account_info, remark))
-        
+
         payout_id = cursor.lastrowid
-        
+
         # 预扣余额（冻结资金）
         new_balance = balance_cents - amount_cents
-        
+
         cursor.execute('''
             UPDATE user_wallets 
             SET balance_cents = ?, updated_at = ?
             WHERE user_id = ?
         ''', (new_balance, time.time(), user_id))
-        
+
         # 记录钱包流水
         cursor.execute('''
             INSERT INTO wallet_logs (user_id, change_cents, balance_after, type, reference_id, remark)
             VALUES (?, ?, ?, 'payout_freeze', ?, ?)
         ''', (user_id, -amount_cents, new_balance, str(payout_id),
               f"提现申请 {payout_id}，冻结 {amount_cents/100:.2f}元"))
-        
+
         conn.commit()
-        
+
         return {
             "status": "success",
             "payout_id": payout_id,
             "message": f"提现申请已提交，冻结金额 {amount_cents/100:.2f}元"
         }
-        
+
     except Exception as exc:
         conn.rollback()
         return {"status": "error", "message": str(exc)}

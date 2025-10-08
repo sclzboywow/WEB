@@ -19,7 +19,7 @@ RATE_LIMITS = {
 
 # 额度限制配置
 LIMITS = {
-    'min_payout_amount': 100,  # 最小提现金额（分）
+    'min_payout_amount': 1,  # 最小提现金额（分）=> 0.01元，与前端一致
     'max_payout_amount': 1000000,  # 最大提现金额（分）
     'daily_payout_limit': 5000000,  # 每日提现限额（分）
 }
