@@ -348,6 +348,158 @@ async def api_listings_review_action(listing_id: int, payload: Dict[str, Any], u
     finally:
         conn.close()
 
+@router.get("/files")
+async def api_listings_files(
+    limit: int = Query(12, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    keyword: Optional[str] = Query(None),
+    listing_type: Optional[str] = Query(None),
+    dir_path: Optional[str] = Query(None)
+):
+    """基于已上架商品的文件维度分页列表。用于商品市场直接展示同步文件。
+
+    返回 { status, total, items: [ {listing_id, file_id, title, file_name, file_path, file_size, price_cents, listing_type, seller:{}, published_at} ] }
+    仅返回 l.status = 'live' AND l.review_status='approved' 的商品关联文件。
+    """
+    db_path = init_sync_db()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    try:
+        where_clause = "WHERE l.status = 'live' AND l.review_status = 'approved'"
+        params: list = []
+
+        if keyword:
+            where_clause += " AND (l.title LIKE ? OR l.description LIKE ? OR lf.file_name LIKE ?)"
+            kw = f"%{keyword}%"
+            params.extend([kw, kw, kw])
+
+        if listing_type:
+            where_clause += " AND l.listing_type = ?"
+            params.append(listing_type)
+
+        if dir_path:
+            where_clause += " AND (lf.file_path LIKE ?)"
+            params.append(f"{dir_path}%")
+
+        cursor.execute(f'''
+            SELECT lf.id as file_id, lf.listing_id, lf.file_name, lf.file_path, lf.file_size, lf.file_md5,
+                   l.price_cents, l.listing_type, COALESCE(l.published_at, l.created_at) as pub_at,
+                   u.user_id, u.display_name, u.avatar_url, l.title
+            FROM listing_files lf
+            INNER JOIN listings l ON lf.listing_id = l.id
+            LEFT JOIN users u ON l.seller_id = u.user_id
+            {where_clause}
+            ORDER BY COALESCE(l.published_at, l.created_at) DESC, lf.id DESC
+            LIMIT ? OFFSET ?
+        ''', (*params, limit, offset))
+
+        rows = cursor.fetchall()
+        items = []
+        for row in rows:
+            items.append({
+                "file_id": row[0],
+                "listing_id": row[1],
+                "file_name": row[2],
+                "file_path": row[3],
+                "file_size": row[4],
+                "file_md5": row[5],
+                "price_cents": row[6],
+                "listing_type": row[7],
+                "published_at": row[8],
+                "seller": {"user_id": row[9], "display_name": row[10], "avatar_url": row[11]},
+                "title": row[12] or row[2],
+                "description": row[2]
+            })
+
+        # total
+        cursor.execute(f'''
+            SELECT COUNT(*)
+            FROM listing_files lf
+            INNER JOIN listings l ON lf.listing_id = l.id
+            {where_clause}
+        ''', params)
+        total = cursor.fetchone()[0]
+
+        return JSONResponse({"status": "success", "items": items, "total": total})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+    finally:
+        conn.close()
+
+@router.get("/public")
+async def api_listings_public(keyword: Optional[str] = None,
+                             listing_type: Optional[str] = None,
+                             limit: int = 20,
+                             offset: int = 0):
+    """买家浏览上架中的商品"""
+    db_path = init_sync_db()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    
+    try:
+        where_clause = "WHERE l.status = 'live' AND l.review_status = 'approved'"
+        params = []
+        
+        if keyword:
+            where_clause += " AND (l.title LIKE ? OR l.description LIKE ?)"
+            kw = f"%{keyword}%"
+            params.extend([kw, kw])
+        
+        if listing_type:
+            where_clause += " AND l.listing_type = ?"
+            params.append(listing_type)
+        
+        cursor.execute(f'''
+            SELECT l.id, l.seller_id, l.title, l.description, l.listing_type, 
+                   l.price_cents, l.created_at, l.published_at,
+                   u.display_name, u.avatar_url,
+                   COUNT(lf.id) as file_count
+            FROM listings l
+            LEFT JOIN users u ON l.seller_id = u.user_id
+            LEFT JOIN listing_files lf ON l.id = lf.listing_id
+            {where_clause}
+            GROUP BY l.id
+            ORDER BY l.published_at DESC
+            LIMIT ? OFFSET ?
+        ''', (*params, limit, offset))
+        
+        rows = cursor.fetchall()
+        listings = []
+        
+        for row in rows:
+            listings.append({
+                "id": row[0],
+                "seller_id": row[1],
+                "seller_name": row[8],
+                "seller_avatar": row[9],
+                "title": row[2],
+                "description": row[3],
+                "listing_type": row[4],
+                "price_cents": row[5],
+                "created_at": row[6],
+                "published_at": row[7],
+                "file_count": row[10]
+            })
+        
+        # 获取总数
+        cursor.execute(f'''
+            SELECT COUNT(DISTINCT l.id)
+            FROM listings l
+            {where_clause}
+        ''', params)
+        total = cursor.fetchone()[0]
+        
+        return JSONResponse({
+            "status": "success",
+            "listings": listings,
+            "total": total
+        })
+        
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+    finally:
+        conn.close()
+
 @router.get("/{listing_id}")
 async def api_listings_detail(listing_id: int, seller_id: Optional[str] = Query(None)):
     """返回商品详情"""
