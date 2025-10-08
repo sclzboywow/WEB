@@ -457,7 +457,7 @@
           const keyword = document.getElementById('search-keyword').value.trim();
           const type = document.getElementById('filter-type').value;
           
-          let url = `/api/listings/public?limit=${pageSize}&offset=${(currentPage - 1) * pageSize}`;
+          let url = `/api/listings/files?limit=${pageSize}&offset=${(currentPage - 1) * pageSize}`;
           if (keyword) url += `&keyword=${encodeURIComponent(keyword)}`;
           if (type) url += `&listing_type=${type}`;
 
@@ -465,9 +465,9 @@
           const data = await response.json();
 
           if (data.status === 'success') {
-            renderListings(data.listings);
-            updatePagination(data.total);
-            updateStats(data.total);
+            renderListings(data.items || data.listings || []);
+            updatePagination(data.total || 0);
+            updateStats(data.total || 0);
           } else {
             Global.notify('加载商品列表失败: ' + data.message, 'error');
           }
