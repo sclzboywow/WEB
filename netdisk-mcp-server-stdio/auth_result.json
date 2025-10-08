@@ -1,0 +1,17 @@
+{
+  "saved_at": "2025-10-03T15:44:50.551300Z",
+  "token": {
+    "access_token": "121.e4d6bee69805ce8082f8dce8cc188b78.YC3k1GBTjFXyG1wbHZTyd5ZyP7HvAXaHVM0Rj0L.m5McFQ",
+    "refresh_token": ""
+  },
+  "user_info": {
+    "avatar_url": "https://dss0.bdstatic.com/7Ls0a8Sm1A5BphGlnYG/sys/portrait/item/netdisk.1.54e4ef53.8qUnZb9inhQqbK9iuR14hw.jpg",
+    "baidu_name": "sclzboy",
+    "errmsg": "succ",
+    "errno": 0,
+    "netdisk_name": "",
+    "request_id": "8706818019741623696",
+    "uk": 3338965519,
+    "vip_type": 2
+  }
+}

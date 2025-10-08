@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>系统状态检查</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 min-h-screen p-8">
+  <div class="max-w-4xl mx-auto">
+    <h1 class="text-3xl font-bold mb-6">系统状态检查</h1>
+    
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <!-- 服务状态 -->
+      <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-xl font-semibold mb-4">服务状态</h2>
+        <div id="service-status" class="space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 bg-gray-300 rounded-full"></span>
+            <span>检查中...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 页面链接 -->
+      <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-xl font-semibold mb-4">页面链接</h2>
+        <div class="space-y-2">
+          <a href="/admin" class="block text-blue-600 hover:underline">管理后台</a>
+          <a href="/market.html" class="block text-blue-600 hover:underline">商品市场</a>
+          <a href="/user.html" class="block text-blue-600 hover:underline">我的订单</a>
+          <a href="/seller.html" class="block text-blue-600 hover:underline">卖家中心</a>
+          <a href="/login" class="block text-blue-600 hover:underline">登录页面</a>
+          <a href="/docs" class="block text-blue-600 hover:underline">API文档</a>
+        </div>
+      </div>
+
+      <!-- API测试 -->
+      <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-xl font-semibold mb-4">API测试</h2>
+        <div id="api-status" class="space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 bg-gray-300 rounded-full"></span>
+            <span>检查中...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 静态资源 -->
+      <div class="bg-white rounded-lg shadow p-6">
+        <h2 class="text-xl font-semibold mb-4">静态资源</h2>
+        <div id="static-status" class="space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 bg-gray-300 rounded-full"></span>
+            <span>检查中...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 详细日志 -->
+    <div class="bg-white rounded-lg shadow p-6 mt-6">
+      <h2 class="text-xl font-semibold mb-4">检查日志</h2>
+      <pre id="log-output" class="bg-gray-100 p-4 rounded text-sm overflow-auto h-40">开始检查...</pre>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const log = (message) => {
+        const output = document.getElementById('log-output');
+        const timestamp = new Date().toLocaleTimeString();
+        output.textContent += `[${timestamp}] ${message}\n`;
+        output.scrollTop = output.scrollHeight;
+      };
+
+      const updateStatus = (containerId, status, message) => {
+        const container = document.getElementById(containerId);
+        const indicator = container.querySelector('.w-3');
+        const text = container.querySelector('span:last-child');
+        
+        indicator.className = `w-3 h-3 rounded-full ${status === 'success' ? 'bg-green-500' : status === 'error' ? 'bg-red-500' : 'bg-yellow-500'}`;
+        text.textContent = message;
+      };
+
+      // 检查服务状态
+      async function checkServiceStatus() {
+        try {
+          const response = await fetch('/health');
+          const data = await response.json();
+          
+          if (data.status === 'healthy') {
+            updateStatus('service-status', 'success', '服务正常运行');
+            log('✓ 服务状态检查通过');
+          } else {
+            updateStatus('service-status', 'error', '服务异常');
+            log('✗ 服务状态检查失败');
+          }
+        } catch (error) {
+          updateStatus('service-status', 'error', '无法连接到服务');
+          log(`✗ 服务状态检查失败: ${error.message}`);
+        }
+      }
+
+      // 检查API状态
+      async function checkApiStatus() {
+        try {
+          const response = await fetch('/api/users');
+          const data = await response.json();
+          
+          if (data.status === 'success') {
+            updateStatus('api-status', 'success', 'API正常响应');
+            log('✓ API状态检查通过');
+          } else {
+            updateStatus('api-status', 'error', 'API响应异常');
+            log('✗ API状态检查失败');
+          }
+        } catch (error) {
+          updateStatus('api-status', 'error', 'API无法访问');
+          log(`✗ API状态检查失败: ${error.message}`);
+        }
+      }
+
+      // 检查静态资源
+      async function checkStaticResources() {
+        const resources = [
+          '/assets/js/common.js',
+          '/assets/css/common.css'
+        ];
+        
+        let successCount = 0;
+        
+        for (const resource of resources) {
+          try {
+            const response = await fetch(resource);
+            if (response.ok) {
+              successCount++;
+              log(`✓ 静态资源 ${resource} 可访问`);
+            } else {
+              log(`✗ 静态资源 ${resource} 访问失败: ${response.status}`);
+            }
+          } catch (error) {
+            log(`✗ 静态资源 ${resource} 访问失败: ${error.message}`);
+          }
+        }
+        
+        if (successCount === resources.length) {
+          updateStatus('static-status', 'success', '所有静态资源正常');
+        } else {
+          updateStatus('static-status', 'error', `${successCount}/${resources.length} 静态资源可访问`);
+        }
+      }
+
+      // 开始检查
+      async function startCheck() {
+        log('开始系统状态检查...');
+        
+        await checkServiceStatus();
+        await checkApiStatus();
+        await checkStaticResources();
+        
+        log('系统状态检查完成');
+      }
+
+      // 启动检查
+      startCheck();
+    })();
+  </script>
+</body>
+</html>

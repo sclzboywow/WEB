@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>买家端功能测试</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/assets/js/common.js"></script>
+  <style>
+    .card { @apply bg-white rounded-lg shadow-sm border p-6; }
+    .btn { @apply px-4 py-2 rounded text-sm font-medium transition-colors; }
+    .btn-primary { @apply bg-blue-600 text-white hover:bg-blue-700; }
+    .btn-success { @apply bg-green-600 text-white hover:bg-green-700; }
+    .btn-secondary { @apply bg-gray-600 text-white hover:bg-gray-700; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div class="container mx-auto px-4 py-6">
+    <h1 class="text-2xl font-bold mb-6">买家端功能测试</h1>
+    
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- 功能测试 -->
+      <div class="card">
+        <h2 class="text-lg font-semibold mb-4">功能测试</h2>
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">测试参数</label>
+            <div class="grid grid-cols-2 gap-2">
+              <input id="test-buyer-id" type="text" placeholder="买家ID" 
+                     class="px-3 py-2 border rounded text-sm" value="test_buyer_001">
+              <input id="test-listing-id" type="number" placeholder="商品ID" 
+                     class="px-3 py-2 border rounded text-sm" value="1">
+            </div>
+          </div>
+          
+          <div class="flex gap-2">
+            <button id="btn-test-order" class="btn btn-primary">测试创建订单</button>
+            <button id="btn-test-pay" class="btn btn-success">测试支付流程</button>
+            <button id="btn-test-purchases" class="btn btn-primary">测试已购清单</button>
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">测试结果</label>
+            <pre id="test-result" class="bg-gray-100 p-3 rounded text-xs overflow-auto h-40">点击按钮开始测试...</pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- 页面链接 -->
+      <div class="card">
+        <h2 class="text-lg font-semibold mb-4">页面链接</h2>
+        <div class="space-y-4">
+          <div class="flex gap-2">
+            <a href="/market.html" class="btn btn-primary">商品市场</a>
+            <a href="/user.html" class="btn btn-primary">我的订单</a>
+            <a href="/seller.html" class="btn btn-primary">卖家中心</a>
+            <a href="/admin" class="btn btn-primary">管理后台</a>
+          </div>
+          
+          <div>
+            <h3 class="font-medium mb-2">功能说明</h3>
+            <ul class="text-sm text-gray-600 space-y-1">
+              <li>• 商品市场：浏览商品、下单购买</li>
+              <li>• 我的订单：查看订单状态、支付</li>
+              <li>• 已购清单：查看已购买的商品</li>
+              <li>• 通知系统：接收支付成功等通知</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 完整流程测试 -->
+    <div class="card mt-6">
+      <h2 class="text-lg font-semibold mb-4">完整购买流程测试</h2>
+      <div class="space-y-4">
+        <div class="flex gap-2">
+          <button id="btn-test-full-flow" class="btn btn-success">测试完整流程</button>
+          <button id="btn-clear-results" class="btn btn-secondary">清空结果</button>
+        </div>
+        
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">完整流程结果</label>
+          <pre id="full-flow-result" class="bg-gray-100 p-3 rounded text-xs overflow-auto h-60">点击"测试完整流程"开始...</pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const BASE_URL = window.location.origin;
+      let currentOrderId = null;
+      
+      // 显示结果
+      function showResult(containerId, data) {
+        const container = document.getElementById(containerId);
+        container.textContent = JSON.stringify(data, null, 2);
+      }
+      
+      // 追加结果
+      function appendResult(containerId, data) {
+        const container = document.getElementById(containerId);
+        const timestamp = new Date().toLocaleTimeString();
+        const content = `[${timestamp}] ${JSON.stringify(data, null, 2)}\n\n`;
+        container.textContent += content;
+        container.scrollTop = container.scrollHeight;
+      }
+      
+      // 测试创建订单
+      document.getElementById('btn-test-order').addEventListener('click', async () => {
+        const buyerId = document.getElementById('test-buyer-id').value || 'test_buyer_001';
+        const listingId = parseInt(document.getElementById('test-listing-id').value) || 1;
+        
+        try {
+          const response = await fetch(`${BASE_URL}/api/orders`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              buyer_id: buyerId,
+              items: [{ listing_id: listingId, quantity: 1 }],
+              remark: '测试订单'
+            })
+          });
+          const data = await response.json();
+          showResult('test-result', data);
+          
+          if (data.status === 'success' && data.order) {
+            currentOrderId = data.order.id;
+            document.getElementById('test-listing-id').value = listingId;
+          }
+        } catch (error) {
+          showResult('test-result', { error: error.message });
+        }
+      });
+      
+      // 测试支付流程
+      document.getElementById('btn-test-pay').addEventListener('click', async () => {
+        if (!currentOrderId) {
+          showResult('test-result', { error: '请先创建订单' });
+          return;
+        }
+        
+        try {
+          // 发起支付
+          const payResponse = await fetch(`${BASE_URL}/api/orders/${currentOrderId}/pay`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              provider: 'alipay',
+              payment_method: 'alipay'
+            })
+          });
+          const payData = await payResponse.json();
+          
+          appendResult('test-result', { step: '发起支付', data: payData });
+          
+          if (payData.status === 'success') {
+            // 模拟支付成功回调
+            const callbackResponse = await fetch(`${BASE_URL}/api/payment/callback`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                order_id: currentOrderId,
+                provider: 'alipay',
+                transaction_id: payData.transaction_id,
+                status: 'success',
+                message: '测试支付成功'
+              })
+            });
+            const callbackData = await callbackResponse.json();
+            
+            appendResult('test-result', { step: '支付回调', data: callbackData });
+          }
+        } catch (error) {
+          appendResult('test-result', { error: error.message });
+        }
+      });
+      
+      // 测试已购清单
+      document.getElementById('btn-test-purchases').addEventListener('click', async () => {
+        const buyerId = document.getElementById('test-buyer-id').value || 'test_buyer_001';
+        
+        try {
+          const response = await fetch(`${BASE_URL}/api/purchases/mine?buyer_id=${buyerId}`);
+          const data = await response.json();
+          showResult('test-result', data);
+        } catch (error) {
+          showResult('test-result', { error: error.message });
+        }
+      });
+      
+      // 测试完整流程
+      document.getElementById('btn-test-full-flow').addEventListener('click', async () => {
+        const buyerId = document.getElementById('test-buyer-id').value || 'test_buyer_001';
+        const listingId = parseInt(document.getElementById('test-listing-id').value) || 1;
+        
+        try {
+          appendResult('full-flow-result', { step: '开始完整流程测试', buyerId, listingId });
+          
+          // 1. 查看商品详情
+          const detailResponse = await fetch(`${BASE_URL}/api/listings/${listingId}`);
+          const detailData = await detailResponse.json();
+          appendResult('full-flow-result', { step: '1. 查看商品详情', data: detailData });
+          
+          if (detailData.status !== 'success') {
+            appendResult('full-flow-result', { error: '商品不存在，请先创建商品' });
+            return;
+          }
+          
+          // 2. 创建订单
+          const orderResponse = await fetch(`${BASE_URL}/api/orders`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              buyer_id: buyerId,
+              items: [{ listing_id: listingId, quantity: 1 }],
+              remark: '完整流程测试订单'
+            })
+          });
+          const orderData = await orderResponse.json();
+          appendResult('full-flow-result', { step: '2. 创建订单', data: orderData });
+          
+          if (orderData.status !== 'success') {
+            appendResult('full-flow-result', { error: '创建订单失败' });
+            return;
+          }
+          
+          const orderId = orderData.order.id;
+          
+          // 3. 发起支付
+          const payResponse = await fetch(`${BASE_URL}/api/orders/${orderId}/pay`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              provider: 'alipay',
+              payment_method: 'alipay'
+            })
+          });
+          const payData = await payResponse.json();
+          appendResult('full-flow-result', { step: '3. 发起支付', data: payData });
+          
+          if (payData.status !== 'success') {
+            appendResult('full-flow-result', { error: '发起支付失败' });
+            return;
+          }
+          
+          // 4. 支付成功回调
+          const callbackResponse = await fetch(`${BASE_URL}/api/payment/callback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              order_id: orderId,
+              provider: 'alipay',
+              transaction_id: payData.transaction_id,
+              status: 'success',
+              message: '完整流程测试支付成功'
+            })
+          });
+          const callbackData = await callbackResponse.json();
+          appendResult('full-flow-result', { step: '4. 支付成功回调', data: callbackData });
+          
+          // 5. 查看订单状态
+          const orderStatusResponse = await fetch(`${BASE_URL}/api/orders/${orderId}`);
+          const orderStatusData = await orderStatusResponse.json();
+          appendResult('full-flow-result', { step: '5. 查看订单状态', data: orderStatusData });
+          
+          // 6. 查看已购清单
+          const purchasesResponse = await fetch(`${BASE_URL}/api/purchases/mine?buyer_id=${buyerId}`);
+          const purchasesData = await purchasesResponse.json();
+          appendResult('full-flow-result', { step: '6. 查看已购清单', data: purchasesData });
+          
+          // 7. 查看卖家钱包
+          const sellerId = detailData.listing.seller_id;
+          const walletResponse = await fetch(`${BASE_URL}/api/wallet/${sellerId}`);
+          const walletData = await walletResponse.json();
+          appendResult('full-flow-result', { step: '7. 查看卖家钱包', data: walletData });
+          
+          appendResult('full-flow-result', { step: '完整流程测试完成', success: true });
+          
+        } catch (error) {
+          appendResult('full-flow-result', { error: error.message });
+        }
+      });
+      
+      // 清空结果
+      document.getElementById('btn-clear-results').addEventListener('click', () => {
+        document.getElementById('full-flow-result').textContent = '点击"测试完整流程"开始...';
+      });
+      
+      // 页面加载完成提示
+      console.log('买家端功能测试页面已加载');
+    })();
+  </script>
+</body>
+</html>

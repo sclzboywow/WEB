@@ -1,0 +1,1166 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>商品市场 - 数字商品交易平台</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/assets/js/common.js"></script>
+  <style>
+    .card { @apply bg-white rounded-lg shadow-sm border; }
+    .btn { @apply px-4 py-2 rounded text-sm font-medium transition-colors; }
+    .btn-primary { @apply bg-blue-600 text-white hover:bg-blue-700; }
+    .btn-success { @apply bg-green-600 text-white hover:bg-green-700; }
+    .btn-secondary { @apply bg-gray-600 text-white hover:bg-gray-700; }
+    .modal { @apply fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50; }
+    .modal-content { @apply bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto; }
+    .hidden { display: none !important; }
+    .tab-active { @apply bg-blue-600 text-white; }
+    .tab-inactive { @apply bg-gray-100 text-gray-700 hover:bg-gray-200; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div class="container mx-auto px-4 py-6">
+    <!-- 页面标题 -->
+    <div class="mb-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">商品市场</h1>
+          <p class="text-gray-600">发现和购买优质数字商品</p>
+        </div>
+        <div class="flex gap-2">
+          <a href="/user.html" class="btn btn-secondary">我的订单</a>
+          <a href="/seller.html" class="btn btn-secondary">卖家中心</a>
+          <div id="notification-badge" class="relative">
+            <button id="btn-notifications" class="btn btn-secondary">通知</button>
+            <span id="unread-count" class="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center hidden">0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 导航标签 -->
+    <div class="mb-6">
+      <nav class="flex space-x-1 bg-gray-100 p-1 rounded-lg">
+        <button id="tab-market" class="tab-btn px-4 py-2 rounded-md text-sm font-medium tab-active" data-tab="market">
+          商品市场
+        </button>
+        <button id="tab-orders" class="tab-btn px-4 py-2 rounded-md text-sm font-medium tab-inactive" data-tab="orders">
+          我的订单
+        </button>
+        <button id="tab-purchases" class="tab-btn px-4 py-2 rounded-md text-sm font-medium tab-inactive" data-tab="purchases">
+          已购清单
+        </button>
+      </nav>
+    </div>
+
+    <!-- 搜索和筛选 -->
+    <div class="card p-6 mb-6">
+      <div class="flex flex-col md:flex-row gap-4">
+        <div class="flex-1">
+          <input id="search-keyword" type="text" placeholder="搜索商品标题或描述..." 
+                 class="w-full px-4 py-2 border rounded-lg text-sm">
+        </div>
+        <div class="md:w-48">
+          <select id="filter-type" class="w-full px-4 py-2 border rounded-lg text-sm">
+            <option value="">所有类型</option>
+            <option value="single">单品</option>
+            <option value="bundle">套装</option>
+            <option value="subscription">订阅</option>
+            <option value="limited">限量</option>
+          </select>
+        </div>
+        <button id="btn-search" class="btn btn-primary px-6">搜索</button>
+        <button id="btn-refresh" class="btn btn-secondary px-6">刷新</button>
+      </div>
+    </div>
+
+    <!-- 内容区域 -->
+    <div class="grid grid-cols-1 gap-6">
+      
+      <!-- 商品市场 -->
+      <section id="section-market" class="tab-section">
+        <div class="card p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold">商品列表</h2>
+            <div id="list-stats" class="text-sm text-gray-500">加载中...</div>
+          </div>
+          
+          <div id="listings-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div class="text-center py-8 text-gray-500">点击"搜索"或"刷新"加载商品</div>
+          </div>
+          
+          <!-- 分页 -->
+          <div id="pagination" class="mt-6 flex justify-center gap-2 hidden">
+            <button id="btn-prev" class="btn btn-secondary">上一页</button>
+            <span id="page-info" class="px-4 py-2 text-sm text-gray-600">第 1 页</span>
+            <button id="btn-next" class="btn btn-secondary">下一页</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 我的订单 -->
+      <section id="section-orders" class="tab-section hidden">
+        <div class="card p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold">我的订单</h2>
+            <div class="flex items-center gap-2">
+              <select id="sel-order-status" class="px-3 py-2 border rounded text-sm">
+                <option value="">全部状态</option>
+                <option value="pending">待支付</option>
+                <option value="paid">已支付</option>
+                <option value="completed">已完成</option>
+              </select>
+              <button id="btn-orders-refresh" class="btn btn-primary">刷新</button>
+            </div>
+          </div>
+          
+          <div id="orders-list" class="space-y-4">
+            <div class="text-sm text-gray-500 text-center py-4">点击"刷新"加载订单列表</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 已购清单 -->
+      <section id="section-purchases" class="tab-section hidden">
+        <div class="card p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold">已购商品</h2>
+            <button id="btn-purchases-refresh" class="btn btn-primary">刷新</button>
+          </div>
+          
+          <div id="purchases-list" class="space-y-4">
+            <div class="text-sm text-gray-500 text-center py-4">点击"刷新"加载已购商品</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- 商品详情模态框 -->
+  <div id="detail-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold">商品详情</h3>
+        <button id="close-modal" class="text-gray-500 hover:text-gray-700 text-xl">&times;</button>
+      </div>
+      
+      <div id="detail-content">
+        <div class="text-center py-8 text-gray-500">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 支付模态框 -->
+  <div id="payment-modal" class="modal hidden">
+    <div class="modal-content">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold">订单支付</h3>
+        <button id="close-payment-modal" class="text-gray-500 hover:text-gray-700 text-xl">&times;</button>
+      </div>
+      
+      <div id="payment-content">
+        <div class="text-center py-8 text-gray-500">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 通知模态框 -->
+  <div id="notification-modal" class="modal hidden">
+    <div class="modal-content max-w-2xl">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold">我的通知</h3>
+        <div class="flex gap-2">
+          <button id="btn-mark-all-read" class="btn btn-secondary text-sm">全部已读</button>
+          <button id="close-notification-modal" class="text-gray-500 hover:text-gray-700 text-xl">&times;</button>
+        </div>
+      </div>
+      
+      <div id="notification-content">
+        <div class="text-center py-8 text-gray-500">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 订单详情模态框 -->
+  <div id="order-detail-modal" class="modal hidden">
+    <div class="modal-content max-w-4xl">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold">订单详情</h3>
+        <button id="close-order-detail-modal" class="text-gray-500 hover:text-gray-700 text-xl">&times;</button>
+      </div>
+      
+      <div id="order-detail-content">
+        <div class="text-center py-8 text-gray-500">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      // 全局变量
+      let currentBuyerId = null;
+      let currentPage = 1;
+      let pageSize = 12;
+      let totalPages = 1;
+      let currentOrderId = null;
+      let currentTab = 'market';
+
+      // 初始化
+      async function init() {
+        await getCurrentUser();
+        bindEvents();
+        loadTabContent(currentTab);
+        loadUnreadCount(); // 加载未读通知数量
+      }
+
+      // 获取当前用户
+      async function getCurrentUser() {
+        try {
+          const response = await fetch('/oauth/session/latest');
+          const data = await response.json();
+          
+          if (data.status === 'success' && data.user_id) {
+            currentBuyerId = data.user_id;
+            if (data.session && data.session.session_id) {
+              try { localStorage.setItem('session_id', data.session.session_id); } catch {}
+            }
+            console.log('当前买家ID:', currentBuyerId);
+          } else {
+            // 如果没有登录，重定向到登录页
+            window.location.href = '/login';
+            return;
+          }
+        } catch (error) {
+          console.error('获取用户信息失败:', error);
+          Global.notify('获取用户信息失败，请重新登录', 'error');
+          setTimeout(() => {
+            window.location.href = '/login';
+          }, 2000);
+        }
+      }
+
+      // 绑定事件
+      function bindEvents() {
+        // 搜索和筛选
+        document.getElementById('btn-search').addEventListener('click', () => {
+          currentPage = 1;
+          loadListings();
+        });
+        
+        document.getElementById('btn-refresh').addEventListener('click', () => {
+          currentPage = 1;
+          loadListings();
+        });
+
+        // 搜索框回车
+        document.getElementById('search-keyword').addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            currentPage = 1;
+            loadListings();
+          }
+        });
+
+        // 分页
+        document.getElementById('btn-prev').addEventListener('click', () => {
+          if (currentPage > 1) {
+            currentPage--;
+            loadListings();
+          }
+        });
+
+        document.getElementById('btn-next').addEventListener('click', () => {
+          if (currentPage < totalPages) {
+            currentPage++;
+            loadListings();
+          }
+        });
+
+        // 模态框关闭
+        document.getElementById('close-modal').addEventListener('click', hideDetailModal);
+        document.getElementById('close-payment-modal').addEventListener('click', hidePaymentModal);
+        
+        // 点击模态框背景关闭
+        document.getElementById('detail-modal').addEventListener('click', (e) => {
+          if (e.target === e.currentTarget) hideDetailModal();
+        });
+        
+        document.getElementById('payment-modal').addEventListener('click', (e) => {
+          if (e.target === e.currentTarget) hidePaymentModal();
+        });
+        
+        document.getElementById('notification-modal').addEventListener('click', (e) => {
+          if (e.target === e.currentTarget) hideNotificationModal();
+        });
+
+        // 通知相关事件
+        document.getElementById('btn-notifications').addEventListener('click', showNotificationModal);
+        document.getElementById('close-notification-modal').addEventListener('click', hideNotificationModal);
+        document.getElementById('btn-mark-all-read').addEventListener('click', markAllNotificationsRead);
+
+        // 标签切换事件
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const tab = btn.getAttribute('data-tab');
+            switchTab(tab);
+          });
+        });
+
+        // 订单相关事件
+        document.getElementById('btn-orders-refresh')?.addEventListener('click', () => loadOrders());
+        document.getElementById('btn-purchases-refresh')?.addEventListener('click', () => loadPurchases());
+        document.getElementById('sel-order-status')?.addEventListener('change', () => loadOrders());
+
+        // 订单详情模态框
+        document.getElementById('close-order-detail-modal').addEventListener('click', hideOrderDetailModal);
+        document.getElementById('order-detail-modal').addEventListener('click', (e) => {
+          if (e.target === e.currentTarget) hideOrderDetailModal();
+        });
+      }
+
+      // 加载商品列表
+      async function loadListings() {
+        try {
+          const keyword = document.getElementById('search-keyword').value.trim();
+          const type = document.getElementById('filter-type').value;
+          
+          let url = `/api/listings/public?limit=${pageSize}&offset=${(currentPage - 1) * pageSize}`;
+          if (keyword) url += `&keyword=${encodeURIComponent(keyword)}`;
+          if (type) url += `&listing_type=${type}`;
+
+          const response = await fetch(url);
+          const data = await response.json();
+
+          if (data.status === 'success') {
+            renderListings(data.listings);
+            updatePagination(data.total);
+            updateStats(data.total);
+          } else {
+            Global.notify('加载商品列表失败: ' + data.message, 'error');
+          }
+        } catch (error) {
+          Global.notify('加载商品列表失败: ' + error.message, 'error');
+        }
+      }
+
+      // 标签切换
+      function switchTab(tab) {
+        currentTab = tab;
+        
+        // 更新标签样式
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+          if (btn.getAttribute('data-tab') === tab) {
+            btn.className = btn.className.replace('tab-inactive', 'tab-active');
+          } else {
+            btn.className = btn.className.replace('tab-active', 'tab-inactive');
+          }
+        });
+
+        // 显示/隐藏内容
+        document.querySelectorAll('.tab-section').forEach(section => {
+          if (section.id === `section-${tab}`) {
+            section.classList.remove('hidden');
+          } else {
+            section.classList.add('hidden');
+          }
+        });
+
+        // 加载内容
+        loadTabContent(tab);
+      }
+
+      // 加载标签内容
+      async function loadTabContent(tab) {
+        switch (tab) {
+          case 'market':
+            await loadListings();
+            break;
+          case 'orders':
+            await loadOrders();
+            break;
+          case 'purchases':
+            await loadPurchases();
+            break;
+        }
+      }
+
+      // 加载订单列表
+      async function loadOrders() {
+        if (!currentBuyerId) return;
+
+        try {
+          const status = document.getElementById('sel-order-status')?.value || '';
+          const url = status ? `/api/orders/mine?status=${status}` : 
+                              `/api/orders/mine`;
+          
+          const response = await fetch(url);
+          const data = await response.json();
+          
+          const container = document.getElementById('orders-list');
+          if (!container) return;
+          
+          if (data.status === 'success' && data.orders.length > 0) {
+            const html = data.orders.map(order => `
+              <div class="border rounded-lg p-4 hover:bg-gray-50">
+                <div class="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 class="font-semibold">订单 ${order.order_no}</h3>
+                    <p class="text-sm text-gray-600">下单时间: ${formatTime(order.created_at)}</p>
+                  </div>
+                  <div class="text-right">
+                    <div class="text-lg font-bold text-green-600">¥${(order.total_amount_cents / 100).toFixed(2)}</div>
+                    <div class="text-sm ${getStatusColor(order.status)}">${getStatusText(order.status)}</div>
+                  </div>
+                </div>
+                
+                <div class="mb-3">
+                  <h4 class="text-sm font-medium text-gray-700 mb-2">订单商品:</h4>
+                  <div class="space-y-2">
+                    ${order.items.map(item => `
+                      <div class="flex items-center justify-between text-sm bg-gray-50 rounded p-2">
+                        <div>
+                          <span class="font-medium">${item.title || '商品ID: ' + item.listing_id}</span>
+                          <span class="text-gray-500 ml-2">x${item.quantity}</span>
+                        </div>
+                        <div class="text-green-600 font-medium">¥${(item.price_cents / 100).toFixed(2)}</div>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+                
+                <div class="flex items-center justify-between">
+                  <div class="text-sm text-gray-500">
+                    支付状态: <span class="${getStatusColor(order.payment_status)}">${getStatusText(order.payment_status)}</span>
+                    ${order.paid_at ? `<span class="ml-4">支付时间: ${formatTime(order.paid_at)}</span>` : ''}
+                  </div>
+                  <div class="flex gap-2">
+                    ${order.status === 'pending' ? `
+                      <button class="btn btn-primary" onclick="payOrder(${order.id})">立即支付</button>
+                    ` : ''}
+                    <button class="btn btn-secondary" onclick="viewOrderDetail(${order.id})">查看详情</button>
+                  </div>
+                </div>
+              </div>
+            `).join('');
+            
+            container.innerHTML = html;
+          } else {
+            container.innerHTML = '<div class="text-sm text-gray-500 text-center py-4">暂无订单</div>';
+          }
+        } catch (error) {
+          Global.notify('加载订单列表失败: ' + error.message, 'error');
+        }
+      }
+
+      // 加载已购商品
+      async function loadPurchases() {
+        if (!currentBuyerId) return;
+
+        try {
+          const response = await fetch(`/api/purchases/mine`);
+          const data = await response.json();
+          
+          const container = document.getElementById('purchases-list');
+          if (!container) return;
+          
+          if (data.status === 'success' && data.purchases.length > 0) {
+            const html = data.purchases.map(purchase => `
+              <div class="border rounded-lg p-4 hover:bg-gray-50">
+                <div class="flex items-center justify-between mb-3">
+                  <div>
+                    <h3 class="font-semibold">${purchase.title || '商品ID: ' + purchase.listing_id}</h3>
+                    <p class="text-sm text-gray-600">购买时间: ${formatTime(purchase.created_at)}</p>
+                  </div>
+                  <div class="text-right">
+                    <div class="text-sm text-gray-500">下载次数: ${purchase.download_count}</div>
+                    <div class="text-sm ${getStatusColor(purchase.order_status)}">${getStatusText(purchase.order_status)}</div>
+                  </div>
+                </div>
+                
+                <div class="mb-3">
+                  <h4 class="text-sm font-medium text-gray-700 mb-2">文件信息:</h4>
+                  <div class="bg-gray-50 rounded p-3">
+                    <div class="text-sm font-mono text-gray-600 break-all mb-2">
+                      ${purchase.file_path || '文件路径待更新'}
+                    </div>
+                    <div class="flex gap-2">
+                      <button class="btn btn-primary text-xs" onclick="copyPath('${purchase.file_path || ''}')">复制路径</button>
+                      <button class="btn btn-success text-xs" onclick="downloadFile('${purchase.file_path || ''}')">下载文件</button>
+                      <button class="btn btn-secondary text-xs" onclick="viewPurchaseDetail(${purchase.id})">查看详情</button>
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="text-xs text-gray-500">
+                  订单号: ${purchase.order_no} | 
+                  最后访问: ${purchase.last_accessed_at ? formatTime(purchase.last_accessed_at) : '从未访问'}
+                </div>
+              </div>
+            `).join('');
+            
+            container.innerHTML = html;
+          } else {
+            container.innerHTML = '<div class="text-sm text-gray-500 text-center py-4">暂无已购商品</div>';
+          }
+        } catch (error) {
+          Global.notify('加载已购商品失败: ' + error.message, 'error');
+        }
+      }
+
+      // 渲染商品列表
+      function renderListings(listings) {
+        const container = document.getElementById('listings-grid');
+        
+        if (listings.length === 0) {
+          container.innerHTML = '<div class="col-span-full text-center py-8 text-gray-500">暂无商品</div>';
+          return;
+        }
+
+        const html = listings.map(listing => `
+          <div class="card p-4 hover:shadow-md transition-shadow">
+            <div class="mb-3">
+              <h3 class="font-semibold text-gray-900 mb-2 line-clamp-2">${listing.title}</h3>
+              <p class="text-sm text-gray-600 line-clamp-2">${listing.description || '暂无描述'}</p>
+            </div>
+            
+            <div class="mb-3">
+              <div class="flex items-center justify-between text-sm text-gray-500 mb-1">
+                <span>卖家: ${listing.seller_name || listing.seller_id}</span>
+                <span>${listing.file_count} 个文件</span>
+              </div>
+              <div class="text-lg font-bold text-green-600">¥${(listing.price_cents / 100).toFixed(2)}</div>
+            </div>
+            
+            <div class="flex gap-2">
+              <button class="btn btn-primary flex-1" onclick="showDetail(${listing.id})">
+                查看详情
+              </button>
+              <button class="btn btn-success flex-1" onclick="buyNow(${listing.id})">
+                立即购买
+              </button>
+            </div>
+          </div>
+        `).join('');
+
+        container.innerHTML = html;
+      }
+
+      // 更新分页
+      function updatePagination(total) {
+        totalPages = Math.ceil(total / pageSize);
+        const pagination = document.getElementById('pagination');
+        const pageInfo = document.getElementById('page-info');
+        const btnPrev = document.getElementById('btn-prev');
+        const btnNext = document.getElementById('btn-next');
+
+        if (totalPages <= 1) {
+          pagination.classList.add('hidden');
+        } else {
+          pagination.classList.remove('hidden');
+          pageInfo.textContent = `第 ${currentPage} 页，共 ${totalPages} 页`;
+          btnPrev.disabled = currentPage <= 1;
+          btnNext.disabled = currentPage >= totalPages;
+        }
+      }
+
+      // 更新统计信息
+      function updateStats(total) {
+        const stats = document.getElementById('list-stats');
+        stats.textContent = `共找到 ${total} 个商品`;
+      }
+
+      // 显示商品详情
+      async function showDetail(listingId) {
+        try {
+          const response = await fetch(`/api/listings/${listingId}`);
+          const data = await response.json();
+
+          if (data.status === 'success') {
+            const listing = data.listing;
+            const content = document.getElementById('detail-content');
+            
+            content.innerHTML = `
+              <div class="space-y-4">
+                <div>
+                  <h4 class="font-semibold text-lg mb-2">${listing.title}</h4>
+                  <p class="text-gray-600">${listing.description || '暂无描述'}</p>
+                </div>
+                
+                <div class="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span class="font-medium">价格:</span>
+                    <span class="text-green-600 font-bold">¥${(listing.price_cents / 100).toFixed(2)}</span>
+                  </div>
+                  <div>
+                    <span class="font-medium">类型:</span>
+                    <span>${getTypeText(listing.listing_type)}</span>
+                  </div>
+                  <div>
+                    <span class="font-medium">卖家:</span>
+                    <span>${listing.seller_name || listing.seller_id}</span>
+                  </div>
+                  <div>
+                    <span class="font-medium">文件数:</span>
+                    <span>${listing.files.length} 个</span>
+                  </div>
+                </div>
+                
+                <div>
+                  <h5 class="font-medium mb-2">文件列表:</h5>
+                  <div class="bg-gray-50 rounded p-3 max-h-32 overflow-y-auto">
+                    ${listing.files.length > 0 ? 
+                      listing.files.map(file => `
+                        <div class="text-sm text-gray-600 py-1">
+                          ${file.file_name || file.file_path}
+                          ${file.file_size ? ` (${formatFileSize(file.file_size)})` : ''}
+                        </div>
+                      `).join('') : 
+                      '<div class="text-sm text-gray-500">暂无文件</div>'
+                    }
+                  </div>
+                </div>
+                
+                <div class="flex gap-2 pt-4">
+                  <button class="btn btn-success flex-1" onclick="buyNow(${listingId})">
+                    立即购买 ¥${(listing.price_cents / 100).toFixed(2)}
+                  </button>
+                </div>
+              </div>
+            `;
+            
+            showDetailModal();
+          } else {
+            Global.notify('加载商品详情失败: ' + data.message, 'error');
+          }
+        } catch (error) {
+          Global.notify('加载商品详情失败: ' + error.message, 'error');
+        }
+      }
+
+      // 立即购买
+      async function buyNow(listingId) {
+        if (!currentBuyerId) {
+          Global.notify('请先登录', 'error');
+          return;
+        }
+
+        try {
+          // 创建订单
+          const orderResponse = await fetch('/api/orders', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              buyer_id: currentBuyerId,
+              items: [{ listing_id: listingId, quantity: 1 }],
+              remark: '从商品市场购买'
+            })
+          });
+
+          const orderData = await orderResponse.json();
+
+          if (orderData.status === 'success') {
+            currentOrderId = orderData.order.id;
+            
+            // 发起支付
+            const paymentResponse = await fetch(`/api/orders/${currentOrderId}/pay`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                provider: 'alipay',
+                payment_method: 'alipay'
+              })
+            });
+
+            const paymentData = await paymentResponse.json();
+
+            if (paymentData.status === 'success') {
+              showPaymentModal(paymentData);
+            } else {
+              Global.notify('发起支付失败: ' + paymentData.message, 'error');
+            }
+          } else {
+            Global.notify('创建订单失败: ' + orderData.message, 'error');
+          }
+        } catch (error) {
+          Global.notify('购买失败: ' + error.message, 'error');
+        }
+      }
+
+      // 显示支付模态框
+      function showPaymentModal(paymentData, orderId = null) {
+        if (orderId) {
+          currentOrderId = orderId;
+        }
+        
+        const content = document.getElementById('payment-content');
+        
+        content.innerHTML = `
+          <div class="space-y-4">
+            <div class="text-center">
+              <h4 class="font-semibold text-lg mb-2">订单支付</h4>
+              <p class="text-gray-600">订单号: ${paymentData.transaction_id}</p>
+            </div>
+            
+            <div class="bg-gray-50 rounded p-4 text-center">
+              <div class="text-2xl font-bold text-green-600 mb-2">¥${(paymentData.amount_cents / 100).toFixed(2)}</div>
+              <p class="text-sm text-gray-600">支付方式: ${paymentData.provider}</p>
+            </div>
+            
+            <div class="text-center">
+              <p class="text-sm text-gray-500 mb-4">此为测试支付，点击确认即视为支付成功</p>
+              <button id="btn-pay-success" class="btn btn-success px-8">
+                确认支付成功
+              </button>
+            </div>
+            
+            <div class="text-center">
+              <button id="btn-pay-cancel" class="btn btn-secondary px-6">
+                取消支付
+              </button>
+            </div>
+          </div>
+        `;
+
+        // 绑定支付按钮事件
+        document.getElementById('btn-pay-success').addEventListener('click', handlePaymentSuccess);
+        document.getElementById('btn-pay-cancel').addEventListener('click', hidePaymentModal);
+
+        document.getElementById('payment-modal').classList.remove('hidden');
+      }
+
+      // 处理支付成功
+      async function handlePaymentSuccess() {
+        try {
+          const response = await fetch('/api/payment/callback', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              order_id: currentOrderId,
+              provider: 'alipay',
+              transaction_id: `TXN${Date.now()}`,
+              status: 'success',
+              message: '测试支付成功'
+            })
+          });
+
+          const data = await response.json();
+
+          if (data.status === 'success') {
+            Global.notify('支付成功！商品已交付到您的账户', 'success');
+            hidePaymentModal();
+            hideDetailModal();
+            
+            // 刷新所有相关标签页内容
+            loadOrders();
+            loadPurchases();
+            
+            // 如果当前在商品市场页面，也刷新一下
+            if (currentTab === 'market') {
+              loadListings();
+            }
+            
+            // 刷新未读通知数量
+            loadUnreadCount();
+          } else {
+            Global.notify('支付处理失败: ' + data.message, 'error');
+          }
+        } catch (error) {
+          Global.notify('支付处理失败: ' + error.message, 'error');
+        }
+      }
+
+      // 显示/隐藏模态框
+      function showDetailModal() {
+        document.getElementById('detail-modal').classList.remove('hidden');
+      }
+
+      function hideDetailModal() {
+        document.getElementById('detail-modal').classList.add('hidden');
+      }
+
+      function showPaymentModal() {
+        document.getElementById('payment-modal').classList.remove('hidden');
+      }
+
+      function hidePaymentModal() {
+        document.getElementById('payment-modal').classList.add('hidden');
+      }
+
+      // 通知相关函数
+      async function showNotificationModal() {
+        if (!currentBuyerId) {
+          Global.notify('请先登录', 'error');
+          return;
+        }
+        try {
+          let page = 1; const size = 20; let accumulated = [];
+          async function loadPage(p){
+            const res = await Global.NotificationManager.fetchNotifications(currentBuyerId, { status:'unread', page:p, size });
+            if(res && res.status==='success'){
+              const items = res.items || res.notifications || [];
+              accumulated = accumulated.concat(items);
+              renderNotifications(accumulated, { hasMore: res.has_more, nextPage: res.next_page });
+              if(!document.getElementById('btn-load-more')){
+                const wrap = document.getElementById('notification-content');
+                const more = document.createElement('div');
+                more.className = 'text-center py-3';
+                more.innerHTML = '<button id="btn-load-more" class="btn btn-secondary text-sm">加载更多</button>';
+                wrap.appendChild(more);
+                document.getElementById('btn-load-more').addEventListener('click', ()=>{
+                  if(res.has_more){ page = res.next_page|| (page+1); loadPage(page); }
+                });
+              }
+              document.getElementById('notification-modal').classList.remove('hidden');
+            } else { Global.notify('加载通知失败', 'error'); }
+          }
+          await loadPage(page);
+        } catch (error) { Global.notify('加载通知失败: ' + error.message, 'error'); }
+      }
+
+      function hideNotificationModal() {
+        document.getElementById('notification-modal').classList.add('hidden');
+      }
+
+      function renderNotifications(notifications, extra) {
+        const container = document.getElementById('notification-content');
+        
+        if (notifications.length === 0) {
+          container.innerHTML = '<div class="text-center py-8 text-gray-500">暂无通知</div>';
+          return;
+        }
+
+        const html = notifications.map(notification => `
+          <div class="border rounded-lg p-4 mb-3 ${notification.status === 'unread' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50'}">
+            <div class="flex items-start justify-between">
+              <div class="flex-1">
+                <h4 class="font-semibold text-gray-900">${notification.title}</h4>
+                <p class="text-sm text-gray-600 mt-1">${notification.content}</p>
+                <div class="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                  <span>${formatTime(notification.created_at)}</span>
+                  <span class="px-2 py-1 rounded ${getNotificationTypeColor(notification.type)}">${getNotificationTypeText(notification.type)}</span>
+                  ${notification.status === 'unread' ? '<span class="text-blue-600 font-medium">未读</span>' : ''}
+                </div>
+              </div>
+              <div class="flex gap-2 ml-4">
+                ${notification.status === 'unread' ? `
+                  <button class=\"btn btn-primary text-xs\" onclick=\"markNotificationRead(${notification.id}); Global.NotificationManager.reportEvent(${notification.id}, '${'"+currentBuyerId+"'}', 'click', {from:'market'})\">标记已读</button>
+                ` : ''}
+              </div>
+            </div>
+          </div>
+        `).join('');
+
+        container.innerHTML = html;
+      }
+
+      async function markNotificationRead(notificationId) {
+        try {
+          const data = await Global.NotificationManager.markNotificationRead(currentBuyerId, notificationId);
+          
+          if (data.status === 'success') {
+            Global.notify('通知已标记为已读', 'success');
+            loadUnreadCount(); // 刷新未读数量
+            showNotificationModal(); // 刷新通知列表
+          } else {
+            Global.notify('操作失败: ' + data.message, 'error');
+          }
+        } catch (error) {
+          Global.notify('操作失败: ' + error.message, 'error');
+        }
+      }
+
+      async function markAllNotificationsRead() {
+        try {
+          const data = await Global.NotificationManager.markAllRead(currentBuyerId);
+          
+          if (data.status === 'success') {
+            Global.notify('所有通知已标记为已读', 'success');
+            loadUnreadCount(); // 刷新未读数量
+            showNotificationModal(); // 刷新通知列表
+          } else {
+            Global.notify('操作失败: ' + data.message, 'error');
+          }
+        } catch (error) {
+          Global.notify('操作失败: ' + error.message, 'error');
+        }
+      }
+
+      async function loadUnreadCount() {
+        if (!currentBuyerId) return;
+        
+        try {
+          const cnt = await Global.NotificationManager.getUnreadCount(currentBuyerId);
+          
+          if (typeof cnt === 'number') {
+            const count = cnt;
+            const badge = document.getElementById('unread-count');
+            
+            if (count > 0) {
+              badge.textContent = count;
+              badge.classList.remove('hidden');
+            } else {
+              badge.classList.add('hidden');
+            }
+          }
+        } catch (error) {
+          console.error('加载未读数量失败:', error);
+        }
+      }
+
+      function getNotificationTypeColor(type) {
+        const colors = {
+          'success': 'bg-green-100 text-green-800',
+          'warning': 'bg-yellow-100 text-yellow-800',
+          'error': 'bg-red-100 text-red-800',
+          'info': 'bg-blue-100 text-blue-800'
+        };
+        return colors[type] || 'bg-gray-100 text-gray-800';
+      }
+
+      function getNotificationTypeText(type) {
+        const texts = {
+          'success': '成功',
+          'warning': '警告',
+          'error': '错误',
+          'info': '信息'
+        };
+        return texts[type] || '通知';
+      }
+
+      // 工具函数
+      function getTypeText(type) {
+        const types = {
+          'single': '单品',
+          'bundle': '套装',
+          'subscription': '订阅',
+          'limited': '限量'
+        };
+        return types[type] || type;
+      }
+
+      function formatFileSize(bytes) {
+        if (!bytes) return '';
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(1024));
+        return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+      }
+
+      // 订单相关函数
+      async function payOrder(orderId) {
+        try {
+          const response = await fetch(`/api/orders/${orderId}/pay`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              provider: 'alipay',
+              payment_method: 'alipay'
+            })
+          });
+
+          const data = await response.json();
+
+          if (data.status === 'success') {
+            // 显示支付模态框
+            showPaymentModal(data, orderId);
+          } else {
+            Global.notify('发起支付失败: ' + data.message, 'error');
+          }
+        } catch (error) {
+          Global.notify('支付失败: ' + error.message, 'error');
+        }
+      }
+
+      async function viewOrderDetail(orderId) {
+        try {
+          const response = await fetch(`/api/orders/${orderId}`);
+          const data = await response.json();
+
+          if (data.status === 'success') {
+            const order = data.order;
+            const content = document.getElementById('order-detail-content');
+            
+            content.innerHTML = `
+              <div class="space-y-6">
+                <div class="grid grid-cols-2 gap-4">
+                  <div>
+                    <h4 class="font-semibold text-lg">订单信息</h4>
+                    <div class="mt-2 space-y-2 text-sm">
+                      <div><span class="font-medium">订单号:</span> ${order.order_no}</div>
+                      <div><span class="font-medium">下单时间:</span> ${formatTime(order.created_at)}</div>
+                      <div><span class="font-medium">订单状态:</span> <span class="${getStatusColor(order.status)}">${getStatusText(order.status)}</span></div>
+                      <div><span class="font-medium">支付状态:</span> <span class="${getStatusColor(order.payment_status)}">${getStatusText(order.payment_status)}</span></div>
+                    </div>
+                  </div>
+                  <div>
+                    <h4 class="font-semibold text-lg">金额信息</h4>
+                    <div class="mt-2 space-y-2 text-sm">
+                      <div><span class="font-medium">订单总额:</span> <span class="text-green-600 font-bold">¥${(order.total_amount_cents / 100).toFixed(2)}</span></div>
+                      <div><span class="font-medium">平台费用:</span> ¥${(order.platform_fee_cents / 100).toFixed(2)}</div>
+                      <div><span class="font-medium">卖家收益:</span> ¥${(order.seller_amount_cents / 100).toFixed(2)}</div>
+                    </div>
+                  </div>
+                </div>
+                
+                <div>
+                  <h4 class="font-semibold text-lg mb-3">订单商品</h4>
+                  <div class="space-y-3">
+                    ${order.items.map(item => `
+                      <div class="border rounded-lg p-3 bg-gray-50">
+                        <div class="flex items-center justify-between">
+                          <div>
+                            <div class="font-medium">${item.title || '商品ID: ' + item.listing_id}</div>
+                            <div class="text-sm text-gray-600">数量: ${item.quantity}</div>
+                          </div>
+                          <div class="text-right">
+                            <div class="font-bold text-green-600">¥${(item.price_cents / 100).toFixed(2)}</div>
+                          </div>
+                        </div>
+                      </div>
+                    `).join('')}
+                  </div>
+                </div>
+                
+                ${order.payments && order.payments.length > 0 ? `
+                  <div>
+                    <h4 class="font-semibold text-lg mb-3">支付记录</h4>
+                    <div class="space-y-2">
+                      ${order.payments.map(payment => `
+                        <div class="border rounded p-3 bg-gray-50">
+                          <div class="flex items-center justify-between text-sm">
+                            <div>
+                              <span class="font-medium">交易号:</span> ${payment.transaction_id}
+                              <span class="ml-4"><span class="font-medium">状态:</span> <span class="${getStatusColor(payment.status)}">${getStatusText(payment.status)}</span></span>
+                              <span class="ml-4"><span class="font-medium">金额:</span> ¥${(payment.amount_cents / 100).toFixed(2)}</span>
+                            </div>
+                            <div class="text-gray-500">${payment.paid_at ? formatTime(payment.paid_at) : formatTime(payment.created_at)}</div>
+                          </div>
+                        </div>
+                      `).join('')}
+                    </div>
+                  </div>
+                ` : ''}
+                
+                <div class="flex gap-2 pt-4">
+                  ${order.status === 'pending' ? `
+                    <button class=\"btn btn-primary\" onclick=\"payOrder(${orderId})\">立即支付</button>
+                  ` : ''}
+                  ${order.status === 'completed' ? `
+                    <button class=\"btn btn-secondary\" onclick=\"applyRefund(${orderId})\">申请退款</button>
+                  ` : ''}
+                  <button class="btn btn-secondary" onclick="hideOrderDetailModal()">关闭</button>
+                </div>
+              </div>
+            `;
+            
+            showOrderDetailModal();
+          } else {
+            Global.notify('加载订单详情失败: ' + data.message, 'error');
+          }
+        } catch (error) {
+          Global.notify('加载订单详情失败: ' + error.message, 'error');
+        }
+      }
+
+      async function applyRefund(orderId){
+        try{
+          const reason = prompt('请输入退款原因：');
+          if(reason===null) return;
+          const buyerId = currentBuyerId;
+          const res = await fetch(`/api/orders/${orderId}/refund`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ reason })});
+          const j = await res.json();
+          if(j.status==='success'){ Global.notify('退款申请已提交', 'success'); hideOrderDetailModal(); }
+          else { Global.notify('退款申请失败: ' + (j.message||''), 'error'); }
+        }catch(e){ Global.notify('退款申请失败: ' + (e.message||e), 'error'); }
+      }
+
+      function showOrderDetailModal() {
+        document.getElementById('order-detail-modal').classList.remove('hidden');
+      }
+
+      function hideOrderDetailModal() {
+        document.getElementById('order-detail-modal').classList.add('hidden');
+      }
+
+      function copyPath(path) {
+        navigator.clipboard.writeText(path).then(() => {
+          Global.notify('文件路径已复制到剪贴板', 'success');
+        }).catch(() => {
+          Global.notify('复制失败，请手动复制', 'error');
+        });
+      }
+
+      function downloadFile(path) {
+        // 这里可以实现文件下载逻辑
+        // 目前只是提示用户文件路径
+        Global.notify(`文件路径: ${path}\n\n请使用百度网盘客户端下载`, 'info');
+      }
+
+      // 查看已购商品详情
+      async function viewPurchaseDetail(purchaseId) {
+        try {
+          // 这里可以调用API获取已购商品的详细信息
+          // 目前只是显示基本信息
+          Global.notify('已购商品详情功能开发中...', 'info');
+        } catch (error) {
+          Global.notify('查看详情失败: ' + error.message, 'error');
+        }
+      }
+
+      // 工具函数
+      function getStatusColor(status) {
+        const colors = {
+          'pending': 'text-yellow-600',
+          'paid': 'text-green-600',
+          'completed': 'text-green-600',
+          'delivered': 'text-blue-600',
+          'success': 'text-green-600',
+          'failed': 'text-red-600',
+          'cancelled': 'text-gray-600',
+          'refunded': 'text-orange-600'
+        };
+        return colors[status] || 'text-gray-600';
+      }
+
+      function getStatusText(status) {
+        const texts = {
+          'pending': '待支付',
+          'paid': '已支付',
+          'completed': '已完成',
+          'delivered': '已交付',
+          'success': '成功',
+          'failed': '失败',
+          'cancelled': '已取消',
+          'refunded': '已退款'
+        };
+        return texts[status] || status;
+      }
+
+      function formatTime(timestamp) {
+        if (!timestamp) return '';
+        return new Date(timestamp * 1000).toLocaleString();
+      }
+
+      // 全局函数（供HTML调用）
+      window.showDetail = showDetail;
+      window.buyNow = buyNow;
+      window.markNotificationRead = markNotificationRead;
+      window.payOrder = payOrder;
+      window.viewOrderDetail = viewOrderDetail;
+      window.applyRefund = applyRefund;
+      window.copyPath = copyPath;
+      window.downloadFile = downloadFile;
+      window.viewPurchaseDetail = viewPurchaseDetail;
+
+      // 启动应用
+      init();
+      
+      // 启动通知轮询（每30秒检查一次）
+      setInterval(() => {
+        if (currentBuyerId) {
+          loadUnreadCount();
+        }
+      }, 30000);
+    })();
+  </script>
+</body>
+</html>

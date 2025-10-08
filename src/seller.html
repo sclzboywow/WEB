@@ -1,0 +1,752 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>卖家中心 - 收益与提现</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/assets/js/common.js"></script>
+  <style>
+    .tab-active { @apply bg-blue-600 text-white; }
+    .tab-inactive { @apply bg-gray-100 text-gray-700 hover:bg-gray-200; }
+    .card { @apply bg-white rounded-lg shadow-sm border; }
+    .mono { font-family: 'Courier New', monospace; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div class="container mx-auto px-4 py-6">
+    <!-- 页面标题 -->
+    <div class="mb-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-2xl font-bold text-gray-900">卖家中心</h1>
+          <p class="text-gray-600">管理您的商品、订单和收益</p>
+        </div>
+        <div class="flex gap-2">
+          <a href="/market.html" class="btn btn-secondary">商品市场</a>
+          <div id="notification-badge" class="relative">
+            <button id="btn-notifications" class="btn btn-secondary">通知</button>
+            <span id="unread-count" class="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center hidden">0</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 导航标签 -->
+    <div class="mb-6">
+      <nav class="flex space-x-1 bg-gray-100 p-1 rounded-lg">
+        <button id="tab-listings" class="tab-btn px-4 py-2 rounded-md text-sm font-medium tab-active" data-tab="listings">
+          我的上架
+        </button>
+        <button id="tab-orders" class="tab-btn px-4 py-2 rounded-md text-sm font-medium tab-inactive" data-tab="orders">
+          我的订单
+        </button>
+        <button id="tab-wallet" class="tab-btn px-4 py-2 rounded-md text-sm font-medium tab-inactive" data-tab="wallet">
+          收益中心
+        </button>
+        <button id="tab-payouts" class="tab-btn px-4 py-2 rounded-md text-sm font-medium tab-inactive" data-tab="payouts">
+          提现记录
+        </button>
+      </nav>
+    </div>
+
+    <!-- 内容区域 -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      
+      <!-- 我的上架 -->
+      <section id="section-listings" class="tab-section lg:col-span-3">
+        <div class="card p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold">我的上架</h2>
+            <div class="flex items-center gap-2">
+              <select id="sel-listing-status" class="px-3 py-2 border rounded text-sm">
+                <option value="">全部状态</option>
+                <option value="draft">草稿</option>
+                <option value="pending">待审核</option>
+                <option value="live">已上架</option>
+                <option value="rejected">已驳回</option>
+              </select>
+              <button id="btn-listings-refresh" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">刷新</button>
+            </div>
+          </div>
+          <div id="listings-list" class="border rounded overflow-hidden">
+            <div class="text-sm text-gray-500 text-center py-4">点击"刷新"加载商品列表</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 我的订单 -->
+      <section id="section-orders" class="tab-section lg:col-span-3 hidden">
+        <div class="card p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold">我的订单</h2>
+            <div class="flex items-center gap-2">
+              <select id="sel-order-status" class="px-3 py-2 border rounded text-sm">
+                <option value="">全部状态</option>
+                <option value="pending">待支付</option>
+                <option value="paid">已支付</option>
+                <option value="completed">已完成</option>
+              </select>
+              <button id="btn-orders-refresh" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">刷新</button>
+            </div>
+          </div>
+          <div id="orders-list" class="border rounded overflow-hidden">
+            <div class="text-sm text-gray-500 text-center py-4">点击"刷新"加载订单列表</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 收益中心 -->
+      <section id="section-wallet" class="tab-section lg:col-span-3 hidden">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <!-- 钱包总览 -->
+          <div class="card p-6">
+            <h2 class="text-lg font-semibold mb-4">收益总览</h2>
+            <div id="wallet-overview" class="space-y-4">
+              <div class="text-sm text-gray-500 text-center py-4">加载中...</div>
+            </div>
+          </div>
+
+          <!-- 提现申请 -->
+          <div class="card p-6">
+            <h2 class="text-lg font-semibold mb-4">提现申请</h2>
+            <form id="payout-form" class="space-y-4">
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">提现金额</label>
+                <div class="relative">
+                  <span class="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-500">¥</span>
+                  <input id="inp-payout-amount" type="number" step="0.01" min="0.01" placeholder="0.00" 
+                         class="w-full pl-8 pr-3 py-2 border rounded text-sm" required>
+                </div>
+                <p class="text-xs text-gray-500 mt-1">最低提现金额：¥0.01</p>
+              </div>
+              
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">提现方式</label>
+                <select id="sel-payout-method" class="w-full px-3 py-2 border rounded text-sm">
+                  <option value="alipay">支付宝</option>
+                  <option value="wechat">微信支付</option>
+                  <option value="bank">银行卡</option>
+                </select>
+              </div>
+              
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">账户信息</label>
+                <input id="inp-payout-account" type="text" placeholder="请输入账户信息" 
+                       class="w-full px-3 py-2 border rounded text-sm" required>
+                <p class="text-xs text-gray-500 mt-1">支付宝：手机号或邮箱；微信：微信号；银行卡：卡号</p>
+              </div>
+              
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">备注（可选）</label>
+                <textarea id="inp-payout-remark" placeholder="请输入备注信息..." 
+                          class="w-full px-3 py-2 border rounded text-sm h-20"></textarea>
+              </div>
+              
+              <button type="submit" class="w-full px-4 py-2 bg-green-600 text-white rounded text-sm font-medium hover:bg-green-700">
+                提交提现申请
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <!-- 钱包流水 -->
+        <div class="card p-6 mt-6">
+          <h2 class="text-lg font-semibold mb-4">钱包流水</h2>
+          <div id="wallet-logs" class="border rounded overflow-hidden">
+            <div class="text-sm text-gray-500 text-center py-4">加载中...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 提现记录 -->
+      <section id="section-payouts" class="tab-section lg:col-span-3 hidden">
+        <div class="card p-6">
+          <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-semibold">提现记录</h2>
+            <div class="flex items-center gap-2">
+              <select id="sel-payout-status" class="px-3 py-2 border rounded text-sm">
+                <option value="">全部状态</option>
+                <option value="pending">待审核</option>
+                <option value="approved">已通过</option>
+                <option value="rejected">已拒绝</option>
+                <option value="paid">已支付</option>
+              </select>
+              <button id="btn-payouts-refresh" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">刷新</button>
+            </div>
+          </div>
+          <div id="payouts-list" class="border rounded overflow-hidden">
+            <div class="text-sm text-gray-500 text-center py-4">点击"刷新"加载提现记录</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- 通知模态框 -->
+  <div id="notification-modal" class="modal hidden">
+    <div class="modal-content max-w-2xl">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold">我的通知</h3>
+        <div class="flex gap-2">
+          <button id="btn-mark-all-read" class="btn btn-secondary text-sm">全部已读</button>
+          <button id="close-notification-modal" class="text-gray-500 hover:text-gray-700 text-xl">&times;</button>
+        </div>
+      </div>
+      
+      <div id="notification-content">
+        <div class="text-center py-8 text-gray-500">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      // 全局变量
+      let currentSellerId = null;
+      let currentTab = 'listings';
+
+      // 初始化
+      async function init() {
+        // 获取当前用户ID（从OAuth状态或本地存储）
+        await getCurrentUser();
+        
+        // 绑定事件
+        bindEvents();
+        
+        // 加载默认标签页
+        loadTabContent(currentTab);
+        
+        // 加载未读通知数量
+        loadUnreadCount();
+      }
+
+      // 获取当前用户
+      async function getCurrentUser() {
+        try {
+          const response = await fetch('/oauth/session/latest');
+          const data = await response.json();
+          
+          if (data.status === 'success' && data.user_id) {
+            currentSellerId = data.user_id;
+            if (data.session && data.session.session_id) {
+              try { localStorage.setItem('session_id', data.session.session_id); } catch {}
+            }
+            console.log('当前用户ID:', currentSellerId);
+          } else {
+            // 如果没有登录，重定向到登录页
+            window.location.href = '/login';
+            return;
+          }
+        } catch (error) {
+          console.error('获取用户信息失败:', error);
+          Global.notify('获取用户信息失败，请重新登录', 'error');
+          setTimeout(() => {
+            window.location.href = '/login';
+          }, 2000);
+        }
+      }
+
+      // 绑定事件
+      function bindEvents() {
+        // 标签切换
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+          btn.addEventListener('click', () => {
+            const tab = btn.getAttribute('data-tab');
+            switchTab(tab);
+          });
+        });
+
+        // 刷新按钮
+        document.getElementById('btn-listings-refresh')?.addEventListener('click', () => loadListings());
+        document.getElementById('btn-orders-refresh')?.addEventListener('click', () => loadOrders());
+        document.getElementById('btn-payouts-refresh')?.addEventListener('click', () => loadPayouts());
+
+        // 提现申请表单
+        document.getElementById('payout-form')?.addEventListener('submit', handlePayoutSubmit);
+
+        // 通知相关事件
+        document.getElementById('btn-notifications')?.addEventListener('click', showNotificationModal);
+        document.getElementById('close-notification-modal')?.addEventListener('click', hideNotificationModal);
+        document.getElementById('btn-mark-all-read')?.addEventListener('click', markAllNotificationsRead);
+        document.getElementById('notification-modal')?.addEventListener('click', (e) => {
+          if (e.target === e.currentTarget) hideNotificationModal();
+        });
+      }
+
+      // 切换标签
+      function switchTab(tab) {
+        currentTab = tab;
+        
+        // 更新标签样式
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+          if (btn.getAttribute('data-tab') === tab) {
+            btn.className = btn.className.replace('tab-inactive', 'tab-active');
+          } else {
+            btn.className = btn.className.replace('tab-active', 'tab-inactive');
+          }
+        });
+
+        // 显示/隐藏内容
+        document.querySelectorAll('.tab-section').forEach(section => {
+          if (section.id === `section-${tab}`) {
+            section.classList.remove('hidden');
+          } else {
+            section.classList.add('hidden');
+          }
+        });
+
+        // 加载内容
+        loadTabContent(tab);
+      }
+
+      // 加载标签内容
+      async function loadTabContent(tab) {
+        switch (tab) {
+          case 'listings':
+            await loadListings();
+            break;
+          case 'orders':
+            await loadOrders();
+            break;
+          case 'wallet':
+            await loadWallet();
+            break;
+          case 'payouts':
+            await loadPayouts();
+            break;
+        }
+      }
+
+      // 加载商品列表
+      async function loadListings() {
+        if (!currentSellerId) return;
+
+        try {
+          const status = document.getElementById('sel-listing-status')?.value || '';
+          const url = status ? `/api/listings/mine?status=${status}` : 
+                              `/api/listings/mine`;
+          
+          const response = await fetch(url);
+          const data = await response.json();
+          
+          const container = document.getElementById('listings-list');
+          if (!container) return;
+          
+          if (data.status === 'success' && data.listings.length > 0) {
+            const rows = data.listings.map(listing => `
+              <div class="border-b p-4 hover:bg-gray-50">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="font-medium">${listing.title}</div>
+                    <div class="text-sm text-gray-600">${listing.description || '无描述'}</div>
+                    <div class="text-xs text-gray-500">价格: ¥${(listing.price_cents / 100).toFixed(2)} | 类型: ${listing.listing_type}</div>
+                  </div>
+                  <div class="text-right">
+                    <div class="text-sm font-medium ${getStatusColor(listing.status)}">${getStatusText(listing.status)}</div>
+                    <div class="text-xs text-gray-500">${formatTime(listing.created_at)}</div>
+                  </div>
+                </div>
+              </div>
+            `).join('');
+            
+            container.innerHTML = rows;
+          } else {
+            container.innerHTML = '<div class="text-sm text-gray-500 text-center py-4">暂无商品</div>';
+          }
+        } catch (error) {
+          Global.notify('加载商品列表失败: ' + error.message, 'error');
+        }
+      }
+
+      // 加载订单列表
+      async function loadOrders() {
+        if (!currentSellerId) return;
+
+        try {
+          const status = document.getElementById('sel-order-status')?.value || '';
+          const url = status ? `/api/orders/seller?status=${status}` : 
+                              `/api/orders/seller`;
+          
+          const response = await fetch(url);
+          const data = await response.json();
+          
+          const container = document.getElementById('orders-list');
+          if (!container) return;
+          
+          if (data.status === 'success' && data.orders.length > 0) {
+            const rows = data.orders.map(order => `
+              <div class="border-b p-4 hover:bg-gray-50">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="font-medium">订单 ${order.order_no}</div>
+                    <div class="text-sm text-gray-600">买家: ${order.buyer_id}</div>
+                    <div class="text-xs text-gray-500">总金额: ¥${(order.total_amount_cents / 100).toFixed(2)} | 我的收益: ¥${(order.seller_amount_cents / 100).toFixed(2)}</div>
+                  </div>
+                  <div class="text-right">
+                    <div class="text-sm font-medium ${getStatusColor(order.status)}">${getStatusText(order.status)}</div>
+                    <div class="text-xs text-gray-500">${formatTime(order.created_at)}</div>
+                  </div>
+                </div>
+              </div>
+            `).join('');
+            
+            container.innerHTML = rows;
+          } else {
+            container.innerHTML = '<div class="text-sm text-gray-500 text-center py-4">暂无订单</div>';
+          }
+        } catch (error) {
+          Global.notify('加载订单列表失败: ' + error.message, 'error');
+        }
+      }
+
+      // 加载钱包信息
+      async function loadWallet() {
+        if (!currentSellerId) return;
+
+        try {
+          const response = await fetch(`/api/wallet/me`);
+          const data = await response.json();
+          
+          if (data.status === 'success') {
+            const wallet = data.wallet;
+            
+            // 更新钱包总览
+            const overviewContainer = document.getElementById('wallet-overview');
+            if (overviewContainer) {
+              overviewContainer.innerHTML = `
+                <div class="grid grid-cols-2 gap-4">
+                  <div class="text-center p-4 bg-green-50 rounded-lg">
+                    <div class="text-2xl font-bold text-green-600">¥${wallet.balance_yuan.toFixed(2)}</div>
+                    <div class="text-sm text-gray-600">可用余额</div>
+                  </div>
+                  <div class="text-center p-4 bg-yellow-50 rounded-lg">
+                    <div class="text-2xl font-bold text-yellow-600">¥${wallet.pending_settlement_yuan.toFixed(2)}</div>
+                    <div class="text-sm text-gray-600">待结算</div>
+                  </div>
+                </div>
+                <div class="text-center p-4 bg-blue-50 rounded-lg">
+                  <div class="text-lg font-semibold text-blue-600">¥${wallet.total_income_yuan.toFixed(2)}</div>
+                  <div class="text-sm text-gray-600">累计收入</div>
+                </div>
+              `;
+            }
+
+            // 更新钱包流水
+            const logsContainer = document.getElementById('wallet-logs');
+            if (logsContainer && data.logs.length > 0) {
+              const rows = data.logs.map(log => `
+                <div class="border-b p-3 hover:bg-gray-50">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <div class="text-sm font-medium">${log.remark}</div>
+                      <div class="text-xs text-gray-500">${log.type} | ${log.reference_id ? '关联: ' + log.reference_id : ''}</div>
+                    </div>
+                    <div class="text-right">
+                      <div class="text-sm font-medium ${log.change_cents >= 0 ? 'text-green-600' : 'text-red-600'}">
+                        ${log.change_cents >= 0 ? '+' : ''}¥${log.change_yuan.toFixed(2)}
+                      </div>
+                      <div class="text-xs text-gray-500">${formatTime(log.created_at)}</div>
+                    </div>
+                  </div>
+                </div>
+              `).join('');
+              
+              logsContainer.innerHTML = rows;
+            } else if (logsContainer) {
+              logsContainer.innerHTML = '<div class="text-sm text-gray-500 text-center py-4">暂无流水记录</div>';
+            }
+          }
+        } catch (error) {
+          Global.notify('加载钱包信息失败: ' + error.message, 'error');
+        }
+      }
+
+      // 加载提现记录
+      async function loadPayouts() {
+        if (!currentSellerId) return;
+
+        try {
+          const status = document.getElementById('sel-payout-status')?.value || '';
+          const url = status ? `/api/payouts/mine?status=${status}` : 
+                              `/api/payouts/mine`;
+          
+          const response = await fetch(url);
+          const data = await response.json();
+          
+          const container = document.getElementById('payouts-list');
+          if (!container) return;
+          
+          if (data.status === 'success' && data.payouts.length > 0) {
+            const rows = data.payouts.map(payout => `
+              <div class="border-b p-4 hover:bg-gray-50">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="font-medium">申请 #${payout.id}</div>
+                    <div class="text-sm text-gray-600">${payout.method} - ${payout.account_info}</div>
+                    <div class="text-xs text-gray-500">${payout.remark || '无备注'}</div>
+                  </div>
+                  <div class="text-right">
+                    <div class="text-sm font-medium">¥${payout.amount_yuan.toFixed(2)}</div>
+                    <div class="text-sm font-medium ${getStatusColor(payout.status)}">${getStatusText(payout.status)}</div>
+                    <div class="text-xs text-gray-500">${formatTime(payout.created_at)}</div>
+                  </div>
+                </div>
+              </div>
+            `).join('');
+            
+            container.innerHTML = rows;
+          } else {
+            container.innerHTML = '<div class="text-sm text-gray-500 text-center py-4">暂无提现记录</div>';
+          }
+        } catch (error) {
+          Global.notify('加载提现记录失败: ' + error.message, 'error');
+        }
+      }
+
+      // 处理提现申请
+      async function handlePayoutSubmit(e) {
+        e.preventDefault();
+        
+        if (!currentSellerId) {
+          Global.notify('请先登录', 'error');
+          return;
+        }
+
+        const amount = parseFloat(document.getElementById('inp-payout-amount').value);
+        const method = document.getElementById('sel-payout-method').value;
+        const account = document.getElementById('inp-payout-account').value;
+        const remark = document.getElementById('inp-payout-remark').value;
+
+        if (amount < 0.01) {
+          Global.notify('提现金额不能少于0.01元', 'error');
+          return;
+        }
+
+        if (!account.trim()) {
+          Global.notify('请输入账户信息', 'error');
+          return;
+        }
+
+        try {
+          const response = await fetch('/api/payouts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              amount_cents: Math.round(amount * 100),
+              method: method,
+              account_info: account,
+              remark: remark
+            })
+          });
+
+          const data = await response.json();
+
+          if (data.status === 'success') {
+            Global.notify('提现申请提交成功', 'success');
+            
+            // 清空表单
+            document.getElementById('payout-form').reset();
+            
+            // 刷新钱包信息
+            await loadWallet();
+            
+            // 切换到提现记录标签
+            switchTab('payouts');
+          } else {
+            Global.notify('提现申请失败: ' + data.message, 'error');
+          }
+        } catch (error) {
+          Global.notify('提现申请失败: ' + error.message, 'error');
+        }
+      }
+
+      // 工具函数
+      function getStatusColor(status) {
+        const colors = {
+          'draft': 'text-gray-600',
+          'pending': 'text-yellow-600',
+          'live': 'text-green-600',
+          'rejected': 'text-red-600',
+          'approved': 'text-green-600',
+          'paid': 'text-blue-600',
+          'completed': 'text-green-600'
+        };
+        return colors[status] || 'text-gray-600';
+      }
+
+      function getStatusText(status) {
+        const texts = {
+          'draft': '草稿',
+          'pending': '待审核',
+          'live': '已上架',
+          'rejected': '已驳回',
+          'approved': '已通过',
+          'paid': '已支付',
+          'completed': '已完成'
+        };
+        return texts[status] || status;
+      }
+
+      function formatTime(timestamp) {
+        if (!timestamp) return '';
+        return new Date(timestamp * 1000).toLocaleString();
+      }
+
+      // 通知相关函数
+      async function showNotificationModal() {
+        if (!currentSellerId) {
+          Global.notify('请先登录', 'error');
+          return;
+        }
+        try {
+          let page = 1; const size = 20; let accumulated = [];
+          async function loadPage(p){
+            const res = await Global.NotificationManager.fetchNotifications(currentSellerId, { status:'unread', page:p, size });
+            if(res && res.status==='success'){
+              const items = res.items || res.notifications || [];
+              accumulated = accumulated.concat(items);
+              renderNotifications(accumulated, { hasMore: res.has_more, nextPage: res.next_page });
+              if(!document.getElementById('btn-load-more')){
+                const wrap = document.getElementById('notification-content');
+                const more = document.createElement('div');
+                more.className = 'text-center py-3';
+                more.innerHTML = '<button id="btn-load-more" class="btn btn-secondary text-sm">加载更多</button>';
+                wrap.appendChild(more);
+                document.getElementById('btn-load-more').addEventListener('click', ()=>{
+                  if(res.has_more){ page = res.next_page|| (page+1); loadPage(page); }
+                });
+              }
+              document.getElementById('notification-modal').classList.remove('hidden');
+            } else { Global.notify('加载通知失败', 'error'); }
+          }
+          await loadPage(page);
+        } catch (error) { Global.notify('加载通知失败: ' + error.message, 'error'); }
+      }
+
+      function hideNotificationModal() {
+        document.getElementById('notification-modal').classList.add('hidden');
+      }
+
+      function renderNotifications(notifications, extra) {
+        const container = document.getElementById('notification-content');
+        
+        if (notifications.length === 0) {
+          container.innerHTML = '<div class="text-center py-8 text-gray-500">暂无通知</div>';
+          return;
+        }
+
+        const html = notifications.map(notification => `
+          <div class="border rounded-lg p-4 mb-3 ${notification.status === 'unread' ? 'bg-blue-50 border-blue-200' : 'bg-gray-50'}">
+            <div class="flex items-start justify-between">
+              <div class="flex-1">
+                <h4 class="font-semibold text-gray-900">${notification.title}</h4>
+                <p class="text-sm text-gray-600 mt-1">${notification.content}</p>
+                <div class="flex items-center gap-4 mt-2 text-xs text-gray-500">
+                  <span>${formatTime(notification.created_at)}</span>
+                  <span class="px-2 py-1 rounded ${getNotificationTypeColor(notification.type)}">${getNotificationTypeText(notification.type)}</span>
+                  ${notification.status === 'unread' ? '<span class="text-blue-600 font-medium">未读</span>' : ''}
+                </div>
+              </div>
+              <div class="flex gap-2 ml-4">
+                ${notification.status === 'unread' ? `
+                  <button class=\"btn btn-primary text-xs\" onclick=\"markNotificationRead(${notification.id}); Global.NotificationManager.reportEvent(${notification.id}, '${'"+currentSellerId+"'}', 'click', {from:'seller'})\">标记已读</button>
+                ` : ''}
+              </div>
+            </div>
+          </div>
+        `).join('');
+
+        container.innerHTML = html;
+      }
+
+      async function markNotificationRead(notificationId) {
+        try {
+          const data = await Global.NotificationManager.markNotificationRead(currentSellerId, notificationId);
+          
+          if (data.status === 'success') {
+            Global.notify('通知已标记为已读', 'success');
+            loadUnreadCount(); // 刷新未读数量
+            showNotificationModal(); // 刷新通知列表
+          } else {
+            Global.notify('操作失败: ' + data.message, 'error');
+          }
+        } catch (error) {
+          Global.notify('操作失败: ' + error.message, 'error');
+        }
+      }
+
+      async function markAllNotificationsRead() {
+        try {
+          const data = await Global.NotificationManager.markAllRead(currentSellerId);
+          
+          if (data.status === 'success') {
+            Global.notify('所有通知已标记为已读', 'success');
+            loadUnreadCount(); // 刷新未读数量
+            showNotificationModal(); // 刷新通知列表
+          } else {
+            Global.notify('操作失败: ' + data.message, 'error');
+          }
+        } catch (error) {
+          Global.notify('操作失败: ' + error.message, 'error');
+        }
+      }
+
+      async function loadUnreadCount() {
+        if (!currentSellerId) return;
+        
+        try {
+          const cnt = await Global.NotificationManager.getUnreadCount(currentSellerId);
+          
+          if (typeof cnt === 'number') {
+            const count = cnt;
+            const badge = document.getElementById('unread-count');
+            
+            if (count > 0) {
+              badge.textContent = count;
+              badge.classList.remove('hidden');
+            } else {
+              badge.classList.add('hidden');
+            }
+          }
+        } catch (error) {
+          console.error('加载未读数量失败:', error);
+        }
+      }
+
+      function getNotificationTypeColor(type) {
+        const colors = {
+          'success': 'bg-green-100 text-green-800',
+          'warning': 'bg-yellow-100 text-yellow-800',
+          'error': 'bg-red-100 text-red-800',
+          'info': 'bg-blue-100 text-blue-800'
+        };
+        return colors[type] || 'bg-gray-100 text-gray-800';
+      }
+
+      function getNotificationTypeText(type) {
+        const texts = {
+          'success': '成功',
+          'warning': '警告',
+          'error': '错误',
+          'info': '信息'
+        };
+        return texts[type] || '通知';
+      }
+
+      // 全局函数（供HTML调用）
+      window.markNotificationRead = markNotificationRead;
+
+      // 启动应用
+      init();
+      
+      // 启动通知轮询（每30秒检查一次）
+      setInterval(() => {
+        if (currentSellerId) {
+          loadUnreadCount();
+        }
+      }, 30000);
+    })();
+  </script>
+</body>
+</html>

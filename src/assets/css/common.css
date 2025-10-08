@@ -1,0 +1,8 @@
+#notify-root{ display:flex; flex-direction:column; gap:8px; }
+.notify-item{ opacity:0; transform: translateY(-6px); transition: all .25s ease; padding:10px 12px; border-radius:6px; color:#fff; background:#334155; box-shadow: 0 4px 20px rgba(0,0,0,.12); font-size:14px; }
+.notify-item.show{ opacity:1; transform: translateY(0); }
+.notify-item.info{ background:#2563eb; }
+.notify-item.success{ background:#16a34a; }
+.notify-item.warn{ background:#f59e0b; }
+.notify-item.error{ background:#dc2626; }
+

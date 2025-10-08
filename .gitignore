@@ -1,0 +1,33 @@
+﻿# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+netdisk-mcp-server-stdio/.venv/
+netdisk-mcp-server-stdio/.venv_wsl/
+
+# Caches
+__pycache__/
+netdisk-mcp-server-stdio/__pycache__/
+payment/__pycache__/
+*.pyc
+
+# Local db / artifacts
+sync_data.db
+*.sqlite*
+*.db
+netdisk-mcp-server-stdio/.sync_state.json
+
+# Secrets
+.env
+*.pem
+*.key
+*.crt
+*.p12
+
+# Editors/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.log

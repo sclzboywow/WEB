@@ -1,0 +1,130 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>百度网盘 OAuth 扫码授权</title>
+  <link rel="stylesheet" href="/assets/css/common.css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 授权流程说明：
+       1) 前端点击“获取二维码”，调用后端 /oauth/url 获取授权地址 auth_url；
+       2) 前端将 auth_url 生成二维码供手机百度网盘扫码；
+       3) 用户同意后，百度回调后端 /oauth/callback：
+          - 后端用 code 换取 access_token/refresh_token，写入 .env；
+          - 同步拉取用户资料，写入 user_info.json；
+          - 将令牌+资料合辑写入 auth_result.json；
+       4) 前端轮询 /oauth/status，检测 authorized=true 即授权完成。 -->
+</head>
+
+<body class="min-h-screen bg-gray-50">
+  <div class="max-w-xl mx-auto py-10 px-6">
+    <h1 class="text-2xl font-bold mb-6">百度网盘 OAuth 扫码授权</h1>
+
+    <div class="bg-white rounded border p-4">
+      <div class="flex items-center justify-between mb-3">
+        <span class="font-medium">扫码授权</span>
+        <button id="btn-qrcode" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">获取二维码</button>
+                            </div>
+      <div id="qrcode-wrap" class="flex items-center space-x-4 cursor-pointer">
+        <img id="qrcode" class="w-40 h-40 border rounded bg-white object-contain" alt="二维码" src=""/>
+        <div class="text-sm text-gray-600">
+          <p id="oauth-tip">点击“获取二维码”，使用手机百度网盘扫码授权。</p>
+          <p id="oauth-status" class="mt-2 text-gray-500">状态：待获取</p>
+          <a id="oauth-link" href="#" target="_blank" class="hidden mt-2 inline-block text-blue-600">在新窗口打开授权链接</a>
+                        </div>
+                    </div>
+                </div>
+                
+    <div class="mt-4 text-xs text-gray-600">
+      <p>授权完成后，服务器会生成：</p>
+      <ul class="list-disc pl-5">
+        <li>.env（令牌）</li>
+        <li>user_info.json（用户资料）</li>
+        <li>auth_result.json（令牌+资料）</li>
+      </ul>
+            </div>
+            
+    <div class="mt-6">
+      <button id="dbg-fire" class="text-xs text-blue-600 underline">调试：发起授权请求</button>
+      <button id="dbg-clear" class="ml-3 text-xs text-gray-500 underline">清空日志</button>
+      <pre id="dbg" class="mt-2 p-3 bg-white border rounded text-xs max-h-56 overflow-auto"></pre>
+                        </div>
+                    </div>
+                    
+  <script src="/assets/js/common.js"></script>
+  <script>
+  (function(){
+    const btn = document.getElementById('btn-qrcode');
+    const img = document.getElementById('qrcode');
+    const wrap = document.getElementById('qrcode-wrap');
+    const statusEl = document.getElementById('oauth-status');
+    const tipEl = document.getElementById('oauth-tip');
+    const linkEl = document.getElementById('oauth-link');
+    const dbg = document.getElementById('dbg');
+    const dbgClear = document.getElementById('dbg-clear');
+    const dbgFire = document.getElementById('dbg-fire');
+    let pollTimer = null;
+    const base = 'http://118.24.67.10:8000/oauth/url';
+
+    function log(msg){
+      const t = new Date().toLocaleTimeString();
+      const line = `[${t}] ${msg}`;
+      console.log(line);
+      if(dbg){ dbg.textContent += (dbg.textContent ? '\n' : '') + line; dbg.scrollTop = dbg.scrollHeight; }
+    }
+
+    dbgClear?.addEventListener('click', ()=>{ if(dbg){ dbg.textContent = ''; } });
+
+    log('页面脚本加载完成');
+    log('按钮存在: ' + (!!btn));
+    log('图片存在: ' + (!!img));
+
+    async function requestAuth(){
+      log('发起：获取授权流程');
+      try{
+        statusEl.textContent = '状态：获取授权链接中...';
+        log('开始请求: ' + base + '/oauth/url');
+        const r = await fetch(base + '/oauth/url');
+        log('响应状态: ' + r.status);
+        const data = await r.json();
+        log('响应JSON: ' + JSON.stringify(data));
+        if(data.status !== 'success') throw new Error(data.message || '获取授权链接失败');
+        const authUrl = data.auth_url;
+        img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(authUrl);
+        img.onclick = ()=>{ window.open(authUrl, '_blank'); };
+        if(linkEl){ linkEl.href = authUrl; linkEl.classList.remove('hidden'); }
+        tipEl.textContent = '请使用手机百度网盘扫码授权';
+        statusEl.textContent = '状态：等待扫码中';
+        if(pollTimer) clearInterval(pollTimer);
+        pollTimer = setInterval(async ()=>{
+          try{
+            const r2 = await fetch(base + '/oauth/status', {cache:'no-store'});
+            const s = await r2.json();
+            if(s.authorized){
+              clearInterval(pollTimer); pollTimer = null;
+              statusEl.textContent = '状态：授权完成，跳转管理页...';
+              log('授权完成，即将跳转 /admin');
+              try{ Global.notify('授权完成，正在进入管理后台', 'success'); }catch(e){}
+              setTimeout(()=>{ window.location.href = '/admin'; }, 600);
+            }
+          }catch(e){}
+        }, 2000);
+      }catch(e){
+        statusEl.textContent = '状态：' + (e.message || '发生错误');
+        log('发生错误: ' + (e && e.message ? e.message : String(e)));
+      }
+    }
+
+    btn?.addEventListener('click', requestAuth);
+    wrap?.addEventListener('click', requestAuth);
+    dbgFire?.addEventListener('click', requestAuth);
+
+    const params = new URLSearchParams(location.search);
+    if(params.get('auto') === '1'){
+      log('检测到 auto=1，自动发起授权请求');
+      requestAuth();
+    }
+  })();
+  </script>
+</body>
+</html>

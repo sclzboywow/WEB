@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>功能测试 - 卖家收益与提现</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/assets/js/common.js"></script>
+  <style>
+    .card { @apply bg-white rounded-lg shadow-sm border p-6; }
+    .btn { @apply px-4 py-2 rounded text-sm font-medium; }
+    .btn-primary { @apply bg-blue-600 text-white hover:bg-blue-700; }
+    .btn-success { @apply bg-green-600 text-white hover:bg-green-700; }
+    .btn-danger { @apply bg-red-600 text-white hover:bg-red-700; }
+  </style>
+</head>
+<body class="bg-gray-50 min-h-screen">
+  <div class="container mx-auto px-4 py-6">
+    <h1 class="text-2xl font-bold mb-6">卖家收益与提现功能测试</h1>
+    
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <!-- 卖家端测试 -->
+      <div class="card">
+        <h2 class="text-lg font-semibold mb-4">卖家端功能</h2>
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">测试用户ID</label>
+            <input id="test-user-id" type="text" placeholder="输入用户ID" 
+                   class="w-full px-3 py-2 border rounded text-sm" value="test_seller_001">
+          </div>
+          
+          <div class="flex gap-2">
+            <button id="btn-test-wallet" class="btn btn-primary">测试钱包信息</button>
+            <button id="btn-test-payout" class="btn btn-success">测试提现申请</button>
+            <button id="btn-test-orders" class="btn btn-primary">测试订单列表</button>
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">测试结果</label>
+            <pre id="seller-result" class="bg-gray-100 p-3 rounded text-xs overflow-auto h-40">点击按钮开始测试...</pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- 管理端测试 -->
+      <div class="card">
+        <h2 class="text-lg font-semibold mb-4">管理端功能</h2>
+        <div class="space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">提现申请ID</label>
+            <input id="test-payout-id" type="number" placeholder="输入提现申请ID" 
+                   class="w-full px-3 py-2 border rounded text-sm">
+          </div>
+          
+          <div class="flex gap-2">
+            <button id="btn-test-payouts-list" class="btn btn-primary">测试提现列表</button>
+            <button id="btn-test-approve" class="btn btn-success">测试审核通过</button>
+            <button id="btn-test-reject" class="btn btn-danger">测试审核拒绝</button>
+          </div>
+          
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">测试结果</label>
+            <pre id="admin-result" class="bg-gray-100 p-3 rounded text-xs overflow-auto h-40">点击按钮开始测试...</pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 快速链接 -->
+    <div class="card mt-6">
+      <h2 class="text-lg font-semibold mb-4">快速链接</h2>
+      <div class="flex gap-4">
+        <a href="/seller.html" class="btn btn-primary">卖家中心</a>
+        <a href="/admin" class="btn btn-primary">管理后台</a>
+        <a href="/docs" class="btn btn-primary">API文档</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      const BASE_URL = window.location.origin;
+      
+      // 获取测试用户ID
+      function getTestUserId() {
+        return document.getElementById('test-user-id').value || 'test_seller_001';
+      }
+      
+      // 获取测试提现ID
+      function getTestPayoutId() {
+        return document.getElementById('test-payout-id').value;
+      }
+      
+      // 显示结果
+      function showResult(containerId, data) {
+        const container = document.getElementById(containerId);
+        container.textContent = JSON.stringify(data, null, 2);
+      }
+      
+      // 测试钱包信息
+      document.getElementById('btn-test-wallet').addEventListener('click', async () => {
+        const userId = getTestUserId();
+        try {
+          const response = await fetch(`${BASE_URL}/api/wallet/${userId}`);
+          const data = await response.json();
+          showResult('seller-result', data);
+        } catch (error) {
+          showResult('seller-result', { error: error.message });
+        }
+      });
+      
+      // 测试提现申请
+      document.getElementById('btn-test-payout').addEventListener('click', async () => {
+        const userId = getTestUserId();
+        try {
+          const response = await fetch(`${BASE_URL}/api/payouts`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              user_id: userId,
+              amount_cents: 10000, // 100元
+              method: 'alipay',
+              account_info: 'test@example.com',
+              remark: '测试提现申请'
+            })
+          });
+          const data = await response.json();
+          showResult('seller-result', data);
+          
+          // 如果成功，自动填入提现ID
+          if (data.status === 'success' && data.payout_id) {
+            document.getElementById('test-payout-id').value = data.payout_id;
+          }
+        } catch (error) {
+          showResult('seller-result', { error: error.message });
+        }
+      });
+      
+      // 测试订单列表
+      document.getElementById('btn-test-orders').addEventListener('click', async () => {
+        const userId = getTestUserId();
+        try {
+          const response = await fetch(`${BASE_URL}/api/orders/seller?seller_id=${userId}`);
+          const data = await response.json();
+          showResult('seller-result', data);
+        } catch (error) {
+          showResult('seller-result', { error: error.message });
+        }
+      });
+      
+      // 测试提现列表
+      document.getElementById('btn-test-payouts-list').addEventListener('click', async () => {
+        try {
+          const response = await fetch(`${BASE_URL}/api/payouts?status=pending`);
+          const data = await response.json();
+          showResult('admin-result', data);
+        } catch (error) {
+          showResult('admin-result', { error: error.message });
+        }
+      });
+      
+      // 测试审核通过
+      document.getElementById('btn-test-approve').addEventListener('click', async () => {
+        const payoutId = getTestPayoutId();
+        if (!payoutId) {
+          showResult('admin-result', { error: '请输入提现申请ID' });
+          return;
+        }
+        
+        try {
+          const response = await fetch(`${BASE_URL}/api/payouts/${payoutId}/review`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              status: 'approved',
+              reviewer_id: 'admin_test',
+              remark: '测试审核通过'
+            })
+          });
+          const data = await response.json();
+          showResult('admin-result', data);
+        } catch (error) {
+          showResult('admin-result', { error: error.message });
+        }
+      });
+      
+      // 测试审核拒绝
+      document.getElementById('btn-test-reject').addEventListener('click', async () => {
+        const payoutId = getTestPayoutId();
+        if (!payoutId) {
+          showResult('admin-result', { error: '请输入提现申请ID' });
+          return;
+        }
+        
+        try {
+          const response = await fetch(`${BASE_URL}/api/payouts/${payoutId}/review`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              status: 'rejected',
+              reviewer_id: 'admin_test',
+              remark: '测试审核拒绝'
+            })
+          });
+          const data = await response.json();
+          showResult('admin-result', data);
+        } catch (error) {
+          showResult('admin-result', { error: error.message });
+        }
+      });
+      
+      // 页面加载完成提示
+      console.log('卖家收益与提现功能测试页面已加载');
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,3383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>管理后台 · 网盘授权与用户信息</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/assets/css/common.css" />
+  <!-- 页面说明：
+       此后台用于查看与管理授权状态和用户信息。
+       - 授权状态：查询 /oauth/status
+       - 查看用户信息：GET /user/info
+       - 查看授权结果：GET /auth/result
+       - 重置本次会话状态：POST /oauth/reset
+       - 跳转扫码登录页：/login（如果已部署对应路由）
+  -->
+  <style>
+    .card { box-shadow: 0 1px 2px rgba(0,0,0,0.06); }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  </style>
+  <script src="/assets/js/common.js"></script>
+  <script>
+    window.ADMIN_CONFIG = {
+      base: window.location.origin // 使用当前域名
+    };
+  </script>
+</head>
+<body class="min-h-screen bg-gray-50">
+  <div class="max-w-7xl mx-auto p-6">
+    <header class="mb-6 flex items-center justify-between">
+      <h1 class="text-2xl font-bold">管理后台</h1>
+      <nav class="space-x-3 text-sm">
+        <a id="nav-login" href="/login" class="text-blue-600 hover:underline">扫码授权</a>
+        <a href="#" id="open-login" class="text-blue-600 hover:underline">在新窗口打开登录</a>
+      </nav>
+    </header>
+
+    <div class="grid grid-cols-12 gap-6">
+      <!-- 侧边栏：MCP 功能导航 -->
+      <aside class="col-span-12 md:col-span-3 lg:col-span-2">
+        <div class="bg-white rounded border p-3 sticky top-4">
+          <div class="text-sm text-gray-500 mb-2">MCP 功能</div>
+          <nav id="sidebar" class="space-y-1 text-sm">
+            <a href="#" data-sec="sec-auth" class="block px-3 py-2 rounded hover:bg-gray-100">授权状态</a>
+            <a href="#" data-sec="sec-user" class="block px-3 py-2 rounded hover:bg-gray-100">用户信息</a>
+            <a href="#" data-sec="sec-result" class="block px-3 py-2 rounded hover:bg-gray-100">授权结果</a>
+            <div class="h-px bg-gray-200 my-2"></div>
+            <a href="#" data-sec="sec-files" class="block px-3 py-2 rounded hover:bg-gray-100">文件列表</a>
+            <a href="#" data-sec="sec-search" class="block px-3 py-2 rounded hover:bg-gray-100">文件搜索</a>
+            <a href="#" data-sec="sec-upload" class="block px-3 py-2 rounded hover:bg-gray-100">上传</a>
+            <a href="#" data-sec="sec-download" class="block px-3 py-2 rounded hover:bg-gray-100">下载</a>
+            <a href="#" data-sec="sec-manage" class="block px-3 py-2 rounded hover:bg-gray-100">文件管理</a>
+            <a href="#" data-sec="sec-multimedia" class="block px-3 py-2 rounded hover:bg-gray-100">多媒体</a>
+            <a href="#" data-sec="sec-catinfo" class="block px-3 py-2 rounded hover:bg-gray-100">分类总数</a>
+            <a href="#" data-sec="sec-sync" class="block px-3 py-2 rounded hover:bg-gray-100">目录同步</a>
+            <a href="#" data-sec="sec-users" class="block px-3 py-2 rounded hover:bg-gray-100">用户管理</a>
+            <a href="#" data-sec="sec-listings" class="block px-3 py-2 rounded hover:bg-gray-100">上架审核</a>
+            <a href="#" data-sec="sec-payouts" class="block px-3 py-2 rounded hover:bg-gray-100">提现审核</a>
+            <a href="#" data-sec="sec-share" class="block px-3 py-2 rounded hover:bg-gray-100">分享功能</a>
+            <a href="#" data-sec="sec-settings" class="block px-3 py-2 rounded hover:bg-gray-100">系统设置</a>
+            <a href="#" data-sec="sec-logs" class="block px-3 py-2 rounded hover:bg-gray-100">调试日志</a>
+          </nav>
+        </div>
+      </aside>
+
+      <!-- 主内容区 -->
+      <main class="col-span-12 md:col-span-9 lg:col-span-10">
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <!-- 授权状态 -->
+      <section id="sec-auth" class="js-sec bg-white card rounded p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-semibold">授权状态</h2>
+          <div>
+            <button id="btn-refresh-status" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">刷新</button>
+            <button id="btn-reset" class="ml-2 px-3 py-1.5 rounded bg-gray-100 text-gray-700 text-sm border">重置会话</button>
+            <button id="btn-set-token" class="ml-2 px-3 py-1.5 rounded bg-emerald-600 text-white text-sm">设置临时Token</button>
+          </div>
+        </div>
+        <p id="status-text" class="text-gray-700">状态：未知</p>
+        <div class="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+          <input id="inp-access" type="text" placeholder="粘贴 access_token" class="w-full px-3 py-2 border rounded text-sm" />
+          <input id="inp-refresh" type="text" placeholder="可选：refresh_token" class="w-full px-3 py-2 border rounded text-sm" />
+        </div>
+      </section>
+
+      <!-- 用户信息 -->
+      <section id="sec-user" class="js-sec bg-white card rounded p-5 lg:col-span-2 hidden">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-semibold">用户信息</h2>
+          <div>
+            <button id="btn-load-user" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">获取</button>
+          </div>
+        </div>
+        <pre id="user-json" class="mono text-xs bg-gray-50 border rounded p-3 overflow-auto max-h-72">未加载</pre>
+      </section>
+
+      <!-- 授权结果 -->
+      <section id="sec-result" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-semibold">授权结果（令牌 + 用户资料合辑）</h2>
+          <div>
+            <button id="btn-load-auth" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">获取</button>
+          </div>
+        </div>
+        <pre id="auth-json" class="mono text-xs bg-gray-50 border rounded p-3 overflow-auto max-h-96">未加载</pre>
+      </section>
+
+      <!-- 调试日志 -->
+      <section id="sec-logs" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="font-semibold">调试日志</h2>
+          <div class="flex items-center gap-2 text-sm">
+            <button id="btn-clear-log" class="px-3 py-1.5 rounded bg-gray-100 text-gray-700 text-sm border">清空</button>
+          </div>
+        </div>
+        <pre id="log" class="mono text-xs bg-gray-50 border rounded p-3 overflow-auto max-h-64"></pre>
+        <div class="mt-2 flex items-center justify-end gap-2 text-sm">
+          <button id="btn-log-prev" class="px-2 py-1 rounded border bg-gray-50">上一页</button>
+          <span id="log-page-info" class="text-gray-500">第 1/1 页</span>
+          <button id="btn-log-next" class="px-2 py-1 rounded border bg-gray-50">下一页</button>
+        </div>
+      </section>
+      
+      <!-- 预留：各 MCP 功能区块占位，后续逐步接入真正接口 -->
+      <section id="sec-files" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold">文件列表</h2>
+          <div class="flex items-center gap-2">
+            <input id="inp-dir" type="text" placeholder="目录（默认 /共享图集）" class="w-64 px-3 py-2 border rounded text-sm" value="/共享图集" />
+            <button id="btn-load-files" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">加载</button>
+          </div>
+        </div>
+        <div class="text-xs text-gray-500 mb-2">显示文件与文件夹</div>
+        <div id="files-list" class="mono text-xs bg-gray-50 border rounded p-3 overflow-auto max-h-80">未加载</div>
+      </section>
+
+      <section id="sec-search" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold">文件搜索</h2>
+          <div class="flex items-center gap-2">
+            <input id="inp-key" type="text" placeholder="关键字" class="w-64 px-3 py-2 border rounded text-sm" />
+            <input id="inp-key-dir" type="text" placeholder="目录（可选）" class="w-56 px-3 py-2 border rounded text-sm" />
+            <button id="btn-search" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">搜索</button>
+          </div>
+        </div>
+        <div id="search-list" class="mono text-xs bg-gray-50 border rounded p-3 overflow-auto max-h-80">未搜索</div>
+      </section>
+
+      <section id="sec-download" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <h2 class="font-semibold mb-4">下载</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- 单文件下载 -->
+          <div class="space-y-2">
+            <div class="text-sm text-gray-500">单文件下载</div>
+            <input id="inp-dl-remote" type="text" placeholder="网盘路径 /a/b.txt" class="w-full px-3 py-2 border rounded text-sm" />
+            <input id="inp-dl-local" type="text" placeholder="本地保存路径(可选)，为空则默认下载目录" class="w-full px-3 py-2 border rounded text-sm" />
+            <div>
+              <button id="btn-dl-browser" class="px-3 py-1.5 rounded bg-emerald-600 text-white text-sm">下载</button>
+              <button id="btn-dl-one" class="ml-2 px-3 py-1.5 rounded bg-blue-600 text-white text-sm hidden">开始下载(服务器)</button>
+            </div>
+            <div class="text-xs text-gray-500">当前默认使用浏览器直链下载，文件将保存到本机的下载目录。</div>
+          </div>
+          <!-- 批量下载 -->
+          <div class="space-y-2">
+            <div class="text-sm text-gray-500">批量下载</div>
+            <textarea id="inp-dl-remotes" placeholder="每行一个网盘路径，如\n/a/1.jpg\n/a/2.mp4" class="w-full h-28 px-3 py-2 border rounded text-sm"></textarea>
+            <input id="inp-dl-dir" type="text" placeholder="本地保存目录(可选)" class="w-full px-3 py-2 border rounded text-sm" />
+            <div>
+              <button id="btn-dl-many-browser" class="px-3 py-1.5 rounded bg-emerald-600 text-white text-sm">批量下载</button>
+            </div>
+          </div>
+        </div>
+        <pre id="download-out" class="mono text-xs bg-gray-50 border rounded p-3 overflow-auto max-h-48 mt-4">等待下载操作</pre>
+
+        <!-- 下载队列与进度 -->
+        <div class="mt-4">
+          <div class="flex items-center justify-between mb-2">
+            <div class="font-semibold">下载队列</div>
+            <div class="space-x-2 text-sm">
+              <button id="btn-queue-start" class="px-3 py-1.5 rounded bg-emerald-600 text-white">开始</button>
+              <button id="btn-queue-pause" class="px-3 py-1.5 rounded bg-amber-600 text-white">暂停</button>
+              <button id="btn-queue-clear-done" class="px-3 py-1.5 rounded bg-gray-100 border">清理已完成</button>
+              <button id="btn-queue-clear" class="px-3 py-1.5 rounded bg-gray-100 border">清空队列</button>
+            </div>
+          </div>
+          <div class="overflow-auto border rounded">
+            <table class="min-w-full text-sm">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="text-left px-3 py-2 w-28">任务ID</th>
+                  <th class="text-left px-3 py-2">网盘路径</th>
+                  <th class="text-left px-3 py-2 w-20">重试</th>
+                  <th class="text-left px-3 py-2 w-36">下次重试</th>
+                  <th class="text-left px-3 py-2 w-56">最后错误</th>
+                  <th class="text-left px-3 py-2 w-28">状态</th>
+                  <th class="text-left px-3 py-2 w-32">进度</th>
+                </tr>
+              </thead>
+              <tbody id="dl-queue-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-upload" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <h2 class="font-semibold mb-4">上传</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="space-y-2">
+            <div class="text-sm text-gray-500">选择文件并指定网盘目录</div>
+            <input id="inp-up-file" type="file" multiple class="w-full px-3 py-2 border rounded text-sm" />
+            <input id="inp-up-remote" type="text" placeholder="目标目录（如 / 或 /我的资源/ ）" class="w-full px-3 py-2 border rounded text-sm" />
+            <div class="text-xs text-gray-500">不填则默认保存到 /来自：mcp_server/ 下；若以 / 结尾将以文件名拼接。</div>
+            <div class="flex items-center gap-2">
+              <label class="inline-flex items-center gap-2 text-sm text-gray-700">
+                冲突策略
+                <select id="sel-up-ondup" class="px-2 py-1.5 border rounded text-sm">
+                  <option value="ask" selected>询问(默认)</option>
+                  <option value="overwrite">覆盖</option>
+                  <option value="rename">自动改名</option>
+                  <option value="skip">跳过</option>
+                </select>
+              </label>
+              <button id="btn-upload" class="px-3 py-1.5 rounded bg-emerald-600 text-white text-sm">开始上传</button>
+              <a href="/docs#/" target="_blank" class="text-blue-600 text-sm hover:underline">查看API文档</a>
+            </div>
+          </div>
+          <div class="space-y-2">
+            <div class="text-sm text-gray-500">结果</div>
+            <pre id="upload-out" class="mono text-xs bg-gray-50 border rounded p-3 overflow-auto max-h-48">等待上传</pre>
+            <div class="mt-2">
+              <div class="font-medium text-sm mb-1">上传队列</div>
+              <div class="overflow-auto border rounded">
+                <table class="min-w-full text-sm">
+                  <thead class="bg-gray-50">
+                    <tr>
+                      <th class="text-left px-3 py-2 w-10">#</th>
+                      <th class="text-left px-3 py-2">文件名</th>
+                      <th class="text-left px-3 py-2 w-24">大小</th>
+                      <th class="text-left px-3 py-2 w-28">状态</th>
+                      <th class="text-left px-3 py-2 w-40">备注</th>
+                    </tr>
+                  </thead>
+                  <tbody id="up-queue-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-manage" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <h2 class="font-semibold mb-3">文件管理</h2>
+        <!-- 内部子选项卡 -->
+        <div class="flex items-center gap-2 mb-4 text-sm">
+          <button class="tab-manage px-3 py-1.5 rounded border bg-gray-50" data-tab="copy">复制</button>
+          <button class="tab-manage px-3 py-1.5 rounded border" data-tab="move">移动</button>
+          <button class="tab-manage px-3 py-1.5 rounded border" data-tab="delete">删除</button>
+          <button class="tab-manage px-3 py-1.5 rounded border" data-tab="rename">重命名</button>
+        </div>
+
+        <!-- 复制 -->
+        <div id="op-copy" class="js-op space-y-2">
+          <div class="text-sm text-gray-500">复制文件/文件夹</div>
+          <input id="inp-copy-src" type="text" placeholder="源路径 /a/b.txt 或 /a/dir" class="w-full px-3 py-2 border rounded text-sm" />
+          <input id="inp-copy-dst" type="text" placeholder="目标路径 /c/d.txt 或 /c/dir/" class="w-full px-3 py-2 border rounded text-sm" />
+          <div class="flex items-center gap-2 text-sm text-gray-600">
+            <label class="inline-flex items-center gap-2">同名策略
+              <select id="sel-copy-ondup" class="px-2 py-1.5 border rounded text-sm">
+                <option value="newcopy" selected>新副本(默认)</option>
+                <option value="overwrite">覆盖</option>
+                <option value="skip">跳过</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <button id="btn-copy-do" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">执行复制</button>
+          </div>
+        </div>
+
+        <!-- 移动 -->
+        <div id="op-move" class="js-op space-y-2 hidden">
+          <div class="text-sm text-gray-500">移动文件/文件夹</div>
+          <input id="inp-move-src" type="text" placeholder="源路径 /a/b.txt 或 /a/dir" class="w-full px-3 py-2 border rounded text-sm" />
+          <input id="inp-move-dst" type="text" placeholder="目标路径 /c/d.txt 或 /c/dir/" class="w-full px-3 py-2 border rounded text-sm" />
+          <div class="flex items-center gap-2 text-sm text-gray-600">
+            <label class="inline-flex items-center gap-2">同名策略
+              <select id="sel-move-ondup" class="px-2 py-1.5 border rounded text-sm">
+                <option value="fail" selected>失败(默认)</option>
+                <option value="overwrite">覆盖</option>
+                <option value="newcopy">新副本</option>
+                <option value="skip">跳过</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <button id="btn-move-do" class="px-3 py-1.5 rounded bg-indigo-600 text-white text-sm">执行移动</button>
+          </div>
+        </div>
+
+        <!-- 删除 -->
+        <div id="op-delete" class="js-op space-y-2 hidden">
+          <div class="text-sm text-gray-500">删除文件/文件夹</div>
+          <input id="inp-del-path" type="text" placeholder="删除路径 /a/b.txt 或 /a/dir" class="w-full px-3 py-2 border rounded text-sm" />
+          <label class="inline-flex items-center gap-2 text-sm text-gray-600"><input id="chk-del-confirm" type="checkbox" /> 我已确认删除该目标</label>
+          <div>
+            <button id="btn-del-do" class="px-3 py-1.5 rounded bg-rose-600 text-white text-sm">执行删除</button>
+          </div>
+        </div>
+
+        <!-- 重命名 -->
+        <div id="op-rename" class="js-op space-y-2 hidden">
+          <div class="text-sm text-gray-500">重命名文件/文件夹</div>
+          <input id="inp-ren-path-2" type="text" placeholder="原路径 /a/b.txt" class="w-full px-3 py-2 border rounded text-sm" />
+          <input id="inp-ren-new-2" type="text" placeholder="新文件名 new.txt（仅文件名）" class="w-full px-3 py-2 border rounded text-sm" />
+          <div class="flex items-center gap-2 text-sm text-gray-600">
+            <label class="inline-flex items-center gap-2">同名策略
+              <select id="sel-rename-ondup" class="px-2 py-1.5 border rounded text-sm">
+                <option value="overwrite" selected>覆盖(默认)</option>
+                <option value="newcopy">新副本</option>
+                <option value="skip">跳过</option>
+              </select>
+            </label>
+          </div>
+          <div>
+            <button id="btn-ren-do" class="px-3 py-1.5 rounded bg-emerald-600 text-white text-sm">执行重命名</button>
+          </div>
+        </div>
+
+        <pre id="manage-out" class="mono text-xs bg-gray-50 border rounded p-3 overflow-auto max-h-64 mt-4">等待操作</pre>
+      </section>
+
+      <section id="sec-multimedia" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold">多媒体</h2>
+          <div class="flex items-center gap-2">
+            <input id="inp-media-dir" type="text" placeholder="目录（默认 /共享图集）" class="w-64 px-3 py-2 border rounded text-sm" value="/共享图集" />
+            <select id="sel-media-cat" class="px-2 py-1.5 border rounded text-sm" title="分类">
+              <option value="">全部</option>
+              <option value="1">视频</option>
+              <option value="2">音频</option>
+              <option value="3">图片</option>
+              <option value="4">文档</option>
+              <option value="5">应用</option>
+              <option value="6">其他</option>
+              <option value="7">种子</option>
+            </select>
+            <button id="btn-media-list" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">列出</button>
+            <span id="media-loading" class="hidden inline-flex items-center text-sm text-gray-500">
+              <span class="animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full mr-2"></span>
+              加载中...
+            </span>
+          </div>
+        </div>
+         <div id="media-list" class="mono text-xs bg-gray-50 border rounded p-3 overflow-auto max-h-80">未加载</div>
+         <div id="media-debug" class="mono text-xs mt-3 bg-gray-50 border rounded p-3 max-h-60 overflow-auto hidden"></div>
+      </section>
+
+      <section id="sec-catinfo" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold">分类总数</h2>
+          <div class="flex items-center gap-2">
+            <input id="inp-catinfo-dir" type="text" placeholder="目录（默认 /）" class="w-64 px-3 py-2 border rounded text-sm" />
+            <select id="sel-catinfo-cat" class="px-2 py-1.5 border rounded text-sm" title="分类">
+              <option value="1">视频</option>
+              <option value="2">音频</option>
+              <option value="3" selected>图片</option>
+              <option value="4">文档</option>
+              <option value="5">应用</option>
+              <option value="6">其他</option>
+              <option value="7">种子</option>
+            </select>
+            <label class="inline-flex items-center gap-2 text-sm text-gray-600"><input id="chk-catinfo-rec" type="checkbox" checked /> 递归</label>
+            <button id="btn-catinfo" class="px-3 py-1.5 rounded bg-gray-700 text-white text-sm">获取</button>
+            <span id="catinfo-loading" class="hidden inline-flex items-center text-sm text-gray-500">
+              <span class="animate-spin inline-block w-4 h-4 border-2 border-current border-t-transparent rounded-full mr-2"></span>
+              查询中...
+            </span>
+          </div>
+        </div>
+        <div id="catinfo-out" class="mono text-xs bg-gray-50 border rounded p-3 overflow-auto max-h-64">未查询</div>
+      </section>
+
+      <section id="sec-sync" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold">目录同步</h2>
+            <div class="flex items-center gap-2">
+              <input id="inp-sync-path" type="text" placeholder="同步目录路径（如 /）" class="w-48 px-3 py-2 border rounded text-sm" value="/共享图集" />
+              <input id="inp-sync-pages" type="number" placeholder="页数" class="w-20 px-3 py-2 border rounded text-sm" value="2" min="1" max="100" title="同步页数（每页1000条，测试参数）" />
+              <label class="flex items-center gap-1 text-sm">
+                <input id="chk-sync-unlimited" type="checkbox" class="rounded" />
+                <span>全量同步</span>
+              </label>
+              <button id="btn-sync-start" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">开始同步</button>
+            <button id="btn-sync-pause" class="px-3 py-1.5 rounded bg-yellow-600 text-white text-sm hidden">暂停</button>
+            <button id="btn-sync-resume" class="px-3 py-1.5 rounded bg-green-600 text-white text-sm hidden">恢复</button>
+            <button id="btn-sync-cancel" class="px-3 py-1.5 rounded bg-red-600 text-white text-sm hidden">取消</button>
+          </div>
+        </div>
+        
+        <!-- 同步进度 -->
+        <div id="sync-progress" class="mb-4 hidden">
+          <div class="flex items-center justify-between mb-2">
+            <span class="text-sm text-gray-600">同步进度</span>
+            <span id="sync-progress-text" class="text-sm text-gray-600">0%</span>
+          </div>
+          <div class="w-full bg-gray-200 rounded-full h-2">
+            <div id="sync-progress-bar" class="bg-blue-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+          </div>
+            <div class="mt-2 text-xs text-gray-500">
+              <span id="sync-stats">已处理: 0 / 总计: 0</span>
+              <span id="sync-pages" class="ml-4">页数: 0 / 0</span>
+              <span id="sync-status" class="ml-4">状态: 准备中</span>
+              <span id="sync-mode" class="ml-4">模式: 全新同步</span>
+            </div>
+        </div>
+        
+        <!-- 数据库统计信息 -->
+        <div class="mb-4">
+          <h3 class="text-sm font-medium text-gray-700 mb-2">数据库统计</h3>
+          <div id="db-stats-detail" class="bg-gray-50 border rounded p-3 text-sm">
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <span class="text-gray-600">总文件数:</span>
+                <span id="db-total-files" class="font-medium">0</span>
+              </div>
+              <div>
+                <span class="text-gray-600">图片文件:</span>
+                <span id="db-image-files" class="font-medium text-blue-600">0</span>
+              </div>
+              <div>
+                <span class="text-gray-600">视频文件:</span>
+                <span id="db-video-files" class="font-medium text-green-600">0</span>
+              </div>
+              <div>
+                <span class="text-gray-600">文档文件:</span>
+                <span id="db-doc-files" class="font-medium text-orange-600">0</span>
+              </div>
+              <div>
+                <span class="text-gray-600">音频文件:</span>
+                <span id="db-audio-files" class="font-medium text-purple-600">0</span>
+              </div>
+              <div>
+                <span class="text-gray-600">其他文件:</span>
+                <span id="db-other-files" class="font-medium text-gray-600">0</span>
+              </div>
+            </div>
+            <div class="mt-2">
+              <button id="btn-refresh-db-stats" class="px-3 py-1.5 rounded bg-gray-600 text-white text-xs">刷新统计</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 同步统计信息 -->
+        <div class="mb-4">
+          <h3 class="text-sm font-medium text-gray-700 mb-2">同步统计</h3>
+          <div id="sync-stats-detail" class="bg-gray-50 border rounded p-3 text-sm">
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <span class="text-gray-600">新增文件:</span>
+                <span id="stats-new" class="font-medium text-green-600">0</span>
+              </div>
+              <div>
+                <span class="text-gray-600">更新文件:</span>
+                <span id="stats-updated" class="font-medium text-blue-600">0</span>
+              </div>
+              <div>
+                <span class="text-gray-600">跳过文件:</span>
+                <span id="stats-skipped" class="font-medium text-gray-600">0</span>
+              </div>
+              <div>
+                <span class="text-gray-600">总文件数:</span>
+                <span id="stats-total" class="font-medium">0</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 同步任务列表 -->
+        <div class="mb-4">
+          <h3 class="text-sm font-medium text-gray-700 mb-2">同步任务</h3>
+          <div id="sync-tasks" class="space-y-2 max-h-40 overflow-auto">
+            <div class="text-sm text-gray-500 text-center py-4">暂无同步任务</div>
+          </div>
+        </div>
+        
+        <!-- 同步日志 -->
+        <div>
+          <h3 class="text-sm font-medium text-gray-700 mb-2">同步日志</h3>
+          <div id="sync-logs" class="mono text-xs bg-gray-50 border rounded p-3 overflow-auto max-h-40">
+            <div class="text-gray-500">等待同步任务...</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 用户管理面板 -->
+      <section id="sec-users" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold">用户管理</h2>
+          <div class="flex items-center gap-2">
+            <input id="inp-user-search" type="text" placeholder="搜索用户ID或昵称" class="w-48 px-3 py-2 border rounded text-sm" />
+            <button id="btn-user-search" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">搜索</button>
+            <button id="btn-user-refresh" class="px-3 py-1.5 rounded bg-gray-600 text-white text-sm">刷新</button>
+          </div>
+        </div>
+
+        <!-- 用户列表 -->
+        <div class="mb-4">
+          <h3 class="text-sm font-medium text-gray-700 mb-2">用户列表</h3>
+          <div id="user-list" class="border rounded overflow-hidden">
+            <div class="text-sm text-gray-500 text-center py-4">点击"刷新"加载用户列表</div>
+          </div>
+        </div>
+
+        <!-- 用户详情 -->
+        <div class="mb-4">
+          <h3 class="text-sm font-medium text-gray-700 mb-2">用户详情</h3>
+          <div id="user-detail" class="bg-gray-50 border rounded p-3">
+            <div class="text-sm text-gray-500 text-center py-4">点击用户列表中的用户查看详情</div>
+          </div>
+        </div>
+
+        <!-- 支付账户管理 -->
+        <div class="mb-4">
+          <h3 class="text-sm font-medium text-gray-700 mb-2">支付账户管理</h3>
+          <div id="payment-accounts" class="bg-gray-50 border rounded p-3">
+            <div class="text-sm text-gray-500 text-center py-4">选择用户后显示支付账户</div>
+          </div>
+        </div>
+
+        <!-- 绑定支付账户表单 -->
+        <div>
+          <h3 class="text-sm font-medium text-gray-700 mb-2">绑定支付账户</h3>
+          <div class="bg-gray-50 border rounded p-3 space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs text-gray-600 mb-1">用户ID</label>
+                <input id="inp-payment-user-id" type="text" placeholder="用户ID" class="w-full px-3 py-2 border rounded text-sm" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-600 mb-1">支付渠道</label>
+                <select id="sel-payment-provider" class="w-full px-3 py-2 border rounded text-sm">
+                  <option value="alipay">支付宝</option>
+                </select>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs text-gray-600 mb-1">账户号码</label>
+                <input id="inp-payment-account-no" type="text" placeholder="账户号码" class="w-full px-3 py-2 border rounded text-sm" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-600 mb-1">账户名称</label>
+                <input id="inp-payment-account-name" type="text" placeholder="账户名称" class="w-full px-3 py-2 border rounded text-sm" />
+              </div>
+            </div>
+            <div class="text-xs text-gray-500 bg-blue-50 p-2 rounded">
+              <strong>注意：</strong>支付密钥已移至系统设置中统一管理，用户只需提供账户信息即可。
+            </div>
+            <div>
+              <button id="btn-payment-bind" class="px-3 py-1.5 rounded bg-green-600 text-white text-sm">绑定支付账户</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 上架审核面板 -->
+      <section id="sec-listings" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold">上架审核</h2>
+          <div class="flex items-center gap-2">
+            <select id="sel-review-status" class="px-3 py-2 border rounded text-sm">
+              <option value="pending">待审核</option>
+              <option value="approved">已通过</option>
+              <option value="rejected">已驳回</option>
+            </select>
+            <button id="btn-listings-refresh" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">刷新</button>
+          </div>
+        </div>
+
+        <!-- 待审核列表 -->
+        <div class="mb-4">
+          <h3 class="text-sm font-medium text-gray-700 mb-2">审核队列</h3>
+          <div id="listings-review-list" class="border rounded overflow-hidden">
+            <div class="text-sm text-gray-500 text-center py-4">点击"刷新"加载审核队列</div>
+          </div>
+        </div>
+
+        <!-- 商品详情和审核操作 -->
+        <div class="mb-4">
+          <h3 class="text-sm font-medium text-gray-700 mb-2">商品详情</h3>
+          <div id="listing-detail" class="bg-gray-50 border rounded p-3">
+            <div class="text-sm text-gray-500 text-center py-4">点击商品列表中的商品查看详情</div>
+          </div>
+        </div>
+
+        <!-- 审核操作 -->
+        <div id="review-actions" class="hidden">
+          <h3 class="text-sm font-medium text-gray-700 mb-2">审核操作</h3>
+          <div class="bg-gray-50 border rounded p-3 space-y-3">
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">审核意见</label>
+              <textarea id="inp-review-remark" placeholder="请输入审核意见..." class="w-full px-3 py-2 border rounded text-sm h-20"></textarea>
+            </div>
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">审核员ID</label>
+              <input id="inp-reviewer-id" type="text" placeholder="审核员ID" class="w-full px-3 py-2 border rounded text-sm" />
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="btn-review-approve" class="px-3 py-1.5 rounded bg-green-600 text-white text-sm">通过</button>
+              <button id="btn-review-reject" class="px-3 py-1.5 rounded bg-red-600 text-white text-sm">驳回</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 提现审核面板 -->
+      <section id="sec-payouts" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold">提现审核</h2>
+          <div class="flex items-center gap-2">
+            <select id="sel-payout-status" class="px-3 py-2 border rounded text-sm">
+              <option value="pending">待审核</option>
+              <option value="approved">已通过</option>
+              <option value="rejected">已拒绝</option>
+              <option value="paid">已支付</option>
+            </select>
+            <button id="btn-payouts-refresh" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">刷新</button>
+          </div>
+        </div>
+
+        <!-- 提现申请列表 -->
+        <div class="mb-4">
+          <h3 class="text-sm font-medium text-gray-700 mb-2">提现申请列表</h3>
+          <div id="payouts-list" class="border rounded overflow-hidden">
+            <div class="text-sm text-gray-500 text-center py-4">点击"刷新"加载提现申请</div>
+          </div>
+        </div>
+
+        <!-- 提现详情和审核操作 -->
+        <div class="mb-4">
+          <h3 class="text-sm font-medium text-gray-700 mb-2">申请详情</h3>
+          <div id="payout-detail" class="bg-gray-50 border rounded p-3">
+            <div class="text-sm text-gray-500 text-center py-4">点击提现申请查看详情</div>
+          </div>
+        </div>
+
+        <!-- 审核操作 -->
+        <div id="payout-actions" class="hidden">
+          <h3 class="text-sm font-medium text-gray-700 mb-2">审核操作</h3>
+          <div class="bg-gray-50 border rounded p-3 space-y-3">
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">审核意见</label>
+              <textarea id="inp-payout-remark" placeholder="请输入审核意见..." class="w-full px-3 py-2 border rounded text-sm h-20"></textarea>
+            </div>
+            <div>
+              <label class="block text-xs text-gray-600 mb-1">审核员ID</label>
+              <input id="inp-payout-reviewer-id" type="text" placeholder="审核员ID" class="w-full px-3 py-2 border rounded text-sm" />
+            </div>
+            <div class="flex items-center gap-2">
+              <button id="btn-payout-approve" class="px-3 py-1.5 rounded bg-green-600 text-white text-sm">通过</button>
+              <button id="btn-payout-reject" class="px-3 py-1.5 rounded bg-red-600 text-white text-sm">拒绝</button>
+              <button id="btn-payout-paid" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">标记已支付</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-share" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <h2 class="font-semibold mb-3">分享功能</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div class="space-y-2">
+            <div class="text-sm text-gray-500">创建分享</div>
+            <input id="inp-share-fsids" type="text" placeholder="fsids 逗号分隔，如 123,456" class="w-full px-3 py-2 border rounded text-sm" />
+            <input id="inp-share-period" type="number" placeholder="有效期天数(默认7)" class="w-full px-3 py-2 border rounded text-sm" />
+            <input id="inp-share-remark" type="text" placeholder="备注(可选)" class="w-full px-3 py-2 border rounded text-sm" />
+            <button id="btn-share-create" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">创建分享</button>
+          </div>
+          <div class="space-y-2">
+            <div class="text-sm text-gray-500">查询分享/转存</div>
+            <input id="inp-share-id" type="text" placeholder="share_id" class="w-full px-3 py-2 border rounded text-sm" />
+            <input id="inp-share-pwd" type="text" placeholder="分享密码(如有)" class="w-full px-3 py-2 border rounded text-sm" />
+            <input id="inp-share-dest" type="text" placeholder="转存目标路径 /" class="w-full px-3 py-2 border rounded text-sm" />
+            <input id="inp-share-fsid-one" type="text" placeholder="单文件 fsid（获取下载地址用）" class="w-full px-3 py-2 border rounded text-sm" />
+            <div class="flex items-center gap-2">
+              <button id="btn-share-query" class="px-3 py-1.5 rounded bg-indigo-600 text-white text-sm">查询</button>
+              <button id="btn-share-transfer" class="px-3 py-1.5 rounded bg-emerald-600 text-white text-sm">转存</button>
+              <button id="btn-share-dlink" class="px-3 py-1.5 rounded bg-gray-700 text-white text-sm">下载地址</button>
+            </div>
+          </div>
+        </div>
+        <pre id="share-out" class="mono text-xs bg-gray-50 border rounded p-3 overflow-auto max-h-64 mt-3">等待操作</pre>
+      </section>
+
+      <!-- 系统设置：全局通知配置 -->
+      <section id="sec-settings" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <div class="flex items-center gap-4 mb-4">
+          <h2 class="font-semibold">系统设置</h2>
+          <div class="flex items-center gap-2 text-sm">
+            <button id="btn-settings-notify" class="px-3 py-1.5 rounded bg-gray-100 border" data-tab="notify">全局通知</button>
+            <button id="btn-settings-payment" class="px-3 py-1.5 rounded border" data-tab="payment">支付配置</button>
+          </div>
+        </div>
+
+        <!-- 全局通知设置 -->
+        <div id="settings-notify" class="settings-tab">
+          <h3 class="font-semibold mb-3">全局通知</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="space-y-2">
+            <div class="text-sm text-gray-500">即时发送</div>
+            <input id="inp-notify-text" type="text" placeholder="通知内容" class="w-full px-3 py-2 border rounded text-sm" />
+            <div class="flex items-center gap-2 text-sm">
+              <select id="sel-notify-type" class="px-2 py-1.5 border rounded">
+                <option value="info">info</option>
+                <option value="success">success</option>
+                <option value="warn">warn</option>
+                <option value="error">error</option>
+              </select>
+              <button id="btn-notify-now" class="px-3 py-1.5 rounded bg-emerald-600 text-white">发送</button>
+            </div>
+          </div>
+          <div class="space-y-2">
+            <div class="text-sm text-gray-500">定时/周期发送</div>
+            <div class="grid grid-cols-2 gap-2">
+              <input id="inp-notify-delay" type="number" min="0" placeholder="延迟秒(一次)" class="px-3 py-2 border rounded text-sm" />
+              <button id="btn-notify-schedule" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">定时一次</button>
+              <input id="inp-notify-interval" type="number" min="1" placeholder="间隔秒(循环)" class="px-3 py-2 border rounded text-sm" />
+              <div class="flex items-center gap-2">
+                <button id="btn-notify-start" class="px-3 py-1.5 rounded bg-indigo-600 text-white text-sm">启动循环</button>
+                <button id="btn-notify-stop" class="px-3 py-1.5 rounded bg-gray-100 border text-sm">停止循环</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="mt-4">
+          <div class="font-semibold mb-2">已排程</div>
+          <div class="overflow-auto border rounded">
+            <table class="min-w-full text-sm">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="text-left px-3 py-2 w-32">ID</th>
+                  <th class="text-left px-3 py-2 w-28">类型</th>
+                  <th class="text-left px-3 py-2">内容</th>
+                  <th class="text-left px-3 py-2 w-28">状态</th>
+                  <th class="text-left px-3 py-2 w-36">下次时间</th>
+                  <th class="text-left px-3 py-2 w-24">操作</th>
+                </tr>
+              </thead>
+              <tbody id="notify-schedule-body"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 通知中心（新API） -->
+        <div class="mt-6 border-t pt-5">
+          <h3 class="font-semibold mb-3">通知中心（广播与管理）</h3>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <!-- 广播发送 -->
+            <div class="space-y-2 md:col-span-1">
+              <div class="text-sm text-gray-500">发送广播</div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-xs text-gray-600 mb-1">作用域</label>
+                  <select id="sel-bc-scope" class="w-full px-3 py-2 border rounded text-sm">
+                    <option value="all">all</option>
+                    <option value="role">role</option>
+                    <option value="user">user</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-600 mb-1">类型</label>
+                  <select id="sel-bc-type" class="w-full px-3 py-2 border rounded text-sm">
+                    <option value="info">info</option>
+                    <option value="success">success</option>
+                    <option value="warning">warning</option>
+                    <option value="error">error</option>
+                  </select>
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <label class="block text-xs text-gray-600 mb-1">目标角色</label>
+                  <select id="sel-bc-role" class="w-full px-3 py-2 border rounded text-sm">
+                    <option value="">(空)</option>
+                    <option value="basic">basic</option>
+                    <option value="seller">seller</option>
+                    <option value="admin">admin</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-600 mb-1">渠道</label>
+                  <input id="inp-bc-channel" type="text" placeholder="inbox" class="w-full px-3 py-2 border rounded text-sm" />
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs text-gray-600 mb-1">用户ID（多行，一行一个，仅当 scope=user 时有效）</label>
+                <textarea id="ta-bc-userids" class="w-full px-3 py-2 border rounded text-sm h-20" placeholder="user_a\nuser_b"></textarea>
+              </div>
+              <div>
+                <label class="block text-xs text-gray-600 mb-1">标题</label>
+                <input id="inp-bc-title" type="text" class="w-full px-3 py-2 border rounded text-sm" placeholder="系统通知" />
+              </div>
+              <div>
+                <label class="block text-xs text-gray-600 mb-1">内容</label>
+                <textarea id="ta-bc-content" class="w-full px-3 py-2 border rounded text-sm h-20" placeholder="通知正文..."></textarea>
+              </div>
+              <div class="flex items-center gap-2">
+                <button id="btn-bc-send" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">发送广播</button>
+                <span id="bc-send-tip" class="text-xs text-gray-500"></span>
+              </div>
+            </div>
+
+            <!-- 管理列表 -->
+            <div class="space-y-2 md:col-span-2">
+              <div class="text-sm text-gray-500">管理通知</div>
+              <div class="grid grid-cols-2 md:grid-cols-5 gap-2">
+                <select id="sel-mg-type" class="px-3 py-2 border rounded text-sm">
+                  <option value="">type=all</option>
+                  <option value="info">info</option>
+                  <option value="success">success</option>
+                  <option value="warning">warning</option>
+                  <option value="error">error</option>
+                </select>
+                <input id="inp-mg-channel" class="px-3 py-2 border rounded text-sm" placeholder="channel" />
+                <select id="sel-mg-role" class="px-3 py-2 border rounded text-sm">
+                  <option value="">role=all</option>
+                  <option value="basic">basic</option>
+                  <option value="seller">seller</option>
+                  <option value="admin">admin</option>
+                </select>
+                <input id="inp-mg-page" type="number" min="1" value="1" class="px-3 py-2 border rounded text-sm" />
+                <input id="inp-mg-size" type="number" min="1" value="10" class="px-3 py-2 border rounded text-sm" />
+              </div>
+              <div class="flex items-center gap-2 mt-2">
+                <button id="btn-mg-refresh" class="px-3 py-1.5 rounded bg-gray-600 text-white text-sm">刷新</button>
+                <span id="mg-page-info" class="text-xs text-gray-500"></span>
+              </div>
+              <div class="overflow-auto border rounded">
+                <table class="min-w-full text-sm">
+                  <thead class="bg-gray-50">
+                    <tr>
+                      <th class="text-left px-3 py-2 w-16">ID</th>
+                      <th class="text-left px-3 py-2 w-28">用户</th>
+                      <th class="text-left px-3 py-2 w-20">类型</th>
+                      <th class="text-left px-3 py-2">标题/内容</th>
+                      <th class="text-left px-3 py-2 w-24">状态</th>
+                      <th class="text-left px-3 py-2 w-24">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody id="mg-body"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        </div>
+
+        <!-- 支付配置设置 -->
+        <div id="settings-payment" class="settings-tab hidden">
+          <h3 class="font-semibold mb-3">支付配置</h3>
+          
+          <!-- 支付配置列表 -->
+          <div class="mb-4">
+            <div class="flex items-center justify-between mb-2">
+              <h4 class="text-sm font-medium text-gray-700">平台支付配置</h4>
+              <button id="btn-payment-config-refresh" class="px-3 py-1.5 rounded bg-gray-600 text-white text-sm">刷新</button>
+            </div>
+            <div id="payment-config-list" class="border rounded overflow-hidden">
+              <div class="text-sm text-gray-500 text-center py-4">点击"刷新"加载配置列表</div>
+            </div>
+          </div>
+
+          <!-- 添加/编辑支付配置 -->
+          <div>
+            <h4 class="text-sm font-medium text-gray-700 mb-2">添加/编辑支付配置</h4>
+            <div class="bg-gray-50 border rounded p-3 space-y-3">
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-xs text-gray-600 mb-1">支付渠道</label>
+                  <select id="sel-payment-config-provider" class="w-full px-3 py-2 border rounded text-sm">
+                    <option value="alipay">支付宝</option>
+                    <option value="wechat">微信支付</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-xs text-gray-600 mb-1">状态</label>
+                  <select id="sel-payment-config-status" class="w-full px-3 py-2 border rounded text-sm">
+                    <option value="active">启用</option>
+                    <option value="disabled">禁用</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs text-gray-600 mb-1">公钥</label>
+                <textarea id="inp-payment-config-public-key" placeholder="支付宝公钥内容" class="w-full px-3 py-2 border rounded text-sm h-20"></textarea>
+              </div>
+              <div>
+                <label class="block text-xs text-gray-600 mb-1">私钥</label>
+                <textarea id="inp-payment-config-private-key" placeholder="支付宝私钥内容" class="w-full px-3 py-2 border rounded text-sm h-20"></textarea>
+              </div>
+              <div class="flex items-center gap-2">
+                <button id="btn-payment-config-save" class="px-3 py-1.5 rounded bg-green-600 text-white text-sm">保存配置</button>
+                <button id="btn-payment-config-test" class="px-3 py-1.5 rounded bg-blue-600 text-white text-sm">测试配置</button>
+                <button id="btn-payment-config-clear" class="px-3 py-1.5 rounded bg-gray-600 text-white text-sm">清空表单</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 退款管理 -->
+      <section id="sec-refunds" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold">退款管理</h2>
+          <div class="flex items-center gap-2 text-sm">
+            <button class="px-3 py-1.5 rounded border" onclick="(function(){ Global.notify('加载中...','info'); window.loadRefunds(); })()">刷新</button>
+            <select id="sel-refund-status" class="px-2 py-1.5 border rounded" onchange="window.loadRefunds(this.value)">
+              <option value="">全部</option>
+              <option value="pending">待审核</option>
+              <option value="approved">已通过</option>
+              <option value="rejected">已拒绝</option>
+              <option value="processed">已处理</option>
+            </select>
+          </div>
+        </div>
+        <div id="refunds-list" class="border rounded overflow-hidden">
+          <div class="text-sm text-gray-500 text-center py-4">点击"刷新"加载退款请求</div>
+        </div>
+      </section>
+
+      <!-- 对账报告 -->
+      <section id="sec-reconcile" class="js-sec bg-white card rounded p-5 lg:col-span-3 hidden">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="font-semibold">财务对账报告</h2>
+          <div class="flex items-center gap-2 text-sm">
+            <input type="datetime-local" id="rc-start" class="px-2 py-1.5 border rounded" />
+            <input type="datetime-local" id="rc-end" class="px-2 py-1.5 border rounded" />
+            <button class="px-3 py-1.5 rounded border" id="btn-rc-generate">生成报告</button>
+            <button class="px-3 py-1.5 rounded border" id="btn-rc-export">导出JSON</button>
+          </div>
+        </div>
+        <div id="rc-summary" class="text-sm text-gray-700"></div>
+        <div class="mt-4 border rounded">
+          <div class="px-3 py-2 font-medium bg-gray-50">异常项</div>
+          <div id="rc-anomalies" class="text-sm"></div>
+        </div>
+      </section>
+
+      </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    (function(){
+      const base = (window.ADMIN_CONFIG && window.ADMIN_CONFIG.base) || '';
+      const statusText = document.getElementById('status-text');
+      const btnRefresh = document.getElementById('btn-refresh-status');
+      const btnReset = document.getElementById('btn-reset');
+      const btnLoadUser = document.getElementById('btn-load-user');
+      const btnLoadAuth = document.getElementById('btn-load-auth');
+      const userBox = document.getElementById('user-json');
+      const authBox = document.getElementById('auth-json');
+      const logBox = document.getElementById('log');
+      const btnLogPrev = document.getElementById('btn-log-prev');
+      const btnLogNext = document.getElementById('btn-log-next');
+      const logPageInfo = document.getElementById('log-page-info');
+      // log buffer & pagination
+      const LOG_MAX = 500;
+      const LOG_PAGE_SIZE = 100;
+      let logLines = [];
+      let logPage = 1; // 1-based
+      function renderLog(){
+        const totalPages = Math.max(1, Math.ceil(logLines.length / LOG_PAGE_SIZE));
+        if(logPage > totalPages) logPage = totalPages;
+        if(logPage < 1) logPage = 1;
+        const start = (logPage - 1) * LOG_PAGE_SIZE;
+        const slice = logLines.slice(start, start + LOG_PAGE_SIZE);
+        logBox.textContent = slice.join('\n');
+        logPageInfo.textContent = `第 ${totalPages===0?0:logPage}/${totalPages} 页`;
+      }
+      const openLogin = document.getElementById('open-login');
+      const btnSetToken = document.getElementById('btn-set-token');
+      const inpAccess = document.getElementById('inp-access');
+      const inpRefresh = document.getElementById('inp-refresh');
+      const btnLoadFiles = document.getElementById('btn-load-files');
+      const inpDir = document.getElementById('inp-dir');
+      const filesList = document.getElementById('files-list');
+      const btnSearch = document.getElementById('btn-search');
+      const inpKey = document.getElementById('inp-key');
+      const inpKeyDir = document.getElementById('inp-key-dir');
+      const searchList = document.getElementById('search-list');
+      // download elements
+      const inpDlRemote = document.getElementById('inp-dl-remote');
+      const inpDlLocal = document.getElementById('inp-dl-local');
+      const btnDlOne = document.getElementById('btn-dl-one');
+      const btnDlBrowser = document.getElementById('btn-dl-browser');
+      const inpDlRemotes = document.getElementById('inp-dl-remotes');
+      const inpDlDir = document.getElementById('inp-dl-dir');
+      const btnDlManyBrowser = document.getElementById('btn-dl-many-browser');
+      const downloadOut = document.getElementById('download-out');
+      // upload elements
+      const btnUpload = document.getElementById('btn-upload');
+      const inpUpFile = document.getElementById('inp-up-file');
+      const inpUpRemote = document.getElementById('inp-up-remote');
+      const uploadOut = document.getElementById('upload-out');
+      const upQueueBody = document.getElementById('up-queue-body');
+      const uploadQueue = [];
+      let uploadRunning = 0;
+      const UP_CONCURRENCY = 3;
+      function formatSize(bytes){ try{ if(bytes==null) return ''; const units=['B','KB','MB','GB']; let i=0; let v=Number(bytes); while(v>=1024&&i<units.length-1){ v/=1024; i++; } return (Math.round(v*10)/10)+' '+units[i]; }catch(_){ return ''; } }
+      function renderUploadQueue(){ if(!upQueueBody) return; upQueueBody.innerHTML = uploadQueue.map((t, idx)=>`<tr class="border-t"><td class="px-3 py-2 text-gray-500">${idx+1}</td><td class="px-3 py-2 mono">${t.file.name}</td><td class="px-3 py-2">${formatSize(t.file.size)}</td><td class="px-3 py-2">${t.status}</td><td class="px-3 py-2 mono text-gray-600">${t.note||''}</td></tr>`).join(''); }
+      async function runNextUploads(){ while(uploadRunning < UP_CONCURRENCY){ const next = uploadQueue.find(t=>t.status==='Queued'); if(!next) break; startOneUpload(next); } }
+      async function startOneUpload(task){ uploadRunning++; task.status='Uploading'; renderUploadQueue(); try{ const fd = new FormData(); fd.append('file', task.file, task.file.name); if(task.remote){ fd.append('remote_path', task.remote); } const qp = new URLSearchParams(); if(task.remote){ qp.set('remote_path', task.remote); } if(task.ondup){ qp.set('ondup', task.ondup); } const resp = await fetch('/api/netdisk/upload' + (qp.toString()?`?${qp.toString()}`:''), { method:'POST', body: fd }); let data = await resp.json(); // FastAPI HTTPException 将详情放在 data.detail 下
+            if(data && data.detail && typeof data.detail==='object'){ data = data.detail; }
+            task.note = (data && (data.message||data.detail)) || ''; if(resp.status===409 && data && data.status==='conflict'){ task.status='Conflict'; // 若选择询问，则提示并可在UI上重试
+            if(data.action==='ask'){ const name = (data.existing&&data.existing.name)||task.file.name; const choice = prompt(`检测到同名文件：${name}\n选择处理方式：overwrite/rename/skip`, 'overwrite'); if(choice && ['overwrite','rename','skip'].includes(choice)){ task.ondup = choice; task.status='Queued'; task.note = '用户选择: ' + choice; } else { task.note = '用户取消或无效选择'; } } } else if(resp.ok && data && data.status==='success'){ task.status='Done'; } else { task.status='Failed'; } }catch(e){ task.status='Failed'; task.note = e.message||String(e); } finally { uploadRunning--; renderUploadQueue(); // 轻微退避，保持 UI 流畅
+          await new Promise(r=>setTimeout(r, 100));
+          runNextUploads(); }
+      }
+      // queue elements
+      const dlQueueBody = document.getElementById('dl-queue-body');
+      const btnQueueStart = document.getElementById('btn-queue-start');
+      const btnQueuePause = document.getElementById('btn-queue-pause');
+      const btnQueueClear = document.getElementById('btn-queue-clear');
+      const btnQueueClearDone = document.getElementById('btn-queue-clear-done');
+      const browserTasks = [];
+      // per-client id
+      const CLIENT_ID_KEY = 'netdisk_client_id';
+      let clientId = localStorage.getItem(CLIENT_ID_KEY);
+      if(!clientId){ clientId = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem(CLIENT_ID_KEY, clientId); }
+      // manage subtabs inputs/buttons
+      const inpCopySrc = document.getElementById('inp-copy-src');
+      const inpCopyDst = document.getElementById('inp-copy-dst');
+      const selCopyOnDup = document.getElementById('sel-copy-ondup');
+      const btnCopyDo = document.getElementById('btn-copy-do');
+      const inpMoveSrc = document.getElementById('inp-move-src');
+      const inpMoveDst = document.getElementById('inp-move-dst');
+      const selMoveOnDup = document.getElementById('sel-move-ondup');
+      const btnMoveDo = document.getElementById('btn-move-do');
+      const inpDelPath = document.getElementById('inp-del-path');
+      const chkDelConfirm = document.getElementById('chk-del-confirm');
+      const btnDelDo = document.getElementById('btn-del-do');
+      const inpRenPath2 = document.getElementById('inp-ren-path-2');
+      const inpRenNew2 = document.getElementById('inp-ren-new-2');
+      const selRenameOnDup = document.getElementById('sel-rename-ondup');
+      const btnRenDo = document.getElementById('btn-ren-do');
+      const manageOut = document.getElementById('manage-out');
+      const inpMediaDir = document.getElementById('inp-media-dir');
+      // 初始化默认目录：从后端 /api/config/defaults 读取（.env 配置），失败则保底 /共享图集
+      (async ()=>{
+        try{
+          const r = await fetch('/api/config/defaults');
+          const j = await r.json();
+          if(j && j.status==='success' && j.defaults){
+            if(inpDir && (!inpDir.value || inpDir.value.trim()==='')) inpDir.value = j.defaults.files_dir || '/共享图集';
+            if(inpKeyDir && (!inpKeyDir.value || inpKeyDir.value.trim()==='')) inpKeyDir.value = j.defaults.search_dir || '/共享图集';
+            if(inpMediaDir && (!inpMediaDir.value || inpMediaDir.value.trim()==='')) inpMediaDir.value = j.defaults.media_dir || '/共享图集';
+            if(inpUpRemote && (!inpUpRemote.value || inpUpRemote.value.trim()==='')) inpUpRemote.value = j.defaults.upload_dir || '/来自：mcp_server/';
+            // ondup 策略下发
+            if(j.defaults.ondup){
+              const od = j.defaults.ondup;
+              const selUp = document.getElementById('sel-up-ondup'); if(selUp && (!selUp.value || selUp.value==='ask')) selUp.value = od.upload || selUp.value;
+              const selCopy = document.getElementById('sel-copy-ondup'); if(selCopy) selCopy.value = od.copy || selCopy.value;
+              const selMove = document.getElementById('sel-move-ondup'); if(selMove) selMove.value = od.move || selMove.value;
+              const selRen = document.getElementById('sel-rename-ondup'); if(selRen) selRen.value = od.rename || selRen.value;
+            }
+            // C2C 预设目录：复制/移动/删除的源/目标
+            if(j.defaults.c2c_dirs){
+              const dirs = j.defaults.c2c_dirs;
+              const cs = document.getElementById('inp-copy-src'); if(cs && (!cs.value || cs.value.trim()==='')) cs.value = (dirs.copy && dirs.copy.src) || cs.value;
+              const cd = document.getElementById('inp-copy-dst'); if(cd && (!cd.value || cd.value.trim()==='')) cd.value = (dirs.copy && dirs.copy.dst) || cd.value;
+              const ms = document.getElementById('inp-move-src'); if(ms && (!ms.value || ms.value.trim()==='')) ms.value = (dirs.move && dirs.move.src) || ms.value;
+              const md = document.getElementById('inp-move-dst'); if(md && (!md.value || md.value.trim()==='')) md.value = (dirs.move && dirs.move.dst) || md.value;
+              const dd = document.getElementById('inp-del-path'); if(dd && (!dd.value || dd.value.trim()==='')) dd.value = (dirs.delete && dirs.delete.src) || dd.value;
+            }
+          } else {
+            if(inpDir && (!inpDir.value || inpDir.value.trim()==='')) inpDir.value = '/共享图集';
+            if(inpKeyDir && (!inpKeyDir.value || inpKeyDir.value.trim()==='')) inpKeyDir.value = '/共享图集';
+            if(inpMediaDir && (!inpMediaDir.value || inpMediaDir.value.trim()==='')) inpMediaDir.value = '/共享图集';
+            if(inpUpRemote && (!inpUpRemote.value || inpUpRemote.value.trim()==='')) inpUpRemote.value = '/来自：mcp_server/';
+          }
+        }catch(_){
+          if(inpDir && (!inpDir.value || inpDir.value.trim()==='')) inpDir.value = '/共享图集';
+          if(inpKeyDir && (!inpKeyDir.value || inpKeyDir.value.trim()==='')) inpKeyDir.value = '/共享图集';
+          if(inpMediaDir && (!inpMediaDir.value || inpMediaDir.value.trim()==='')) inpMediaDir.value = '/共享图集';
+          if(inpUpRemote && (!inpUpRemote.value || inpUpRemote.value.trim()==='')) inpUpRemote.value = '/来自：mcp_server/';
+        }
+      })();
+      const btnMediaList = document.getElementById('btn-media-list');
+      const selMediaCat = document.getElementById('sel-media-cat');
+      const mediaLoading = document.getElementById('media-loading');
+      // 分类总数
+      const inpCatinfoDir = document.getElementById('inp-catinfo-dir');
+      const selCatinfoCat = document.getElementById('sel-catinfo-cat');
+      const chkCatinfoRec = document.getElementById('chk-catinfo-rec');
+      const btnCatinfo = document.getElementById('btn-catinfo');
+      const catinfoOut = document.getElementById('catinfo-out');
+      // 同步功能
+      const inpSyncPath = document.getElementById('inp-sync-path');
+      const inpSyncPages = document.getElementById('inp-sync-pages');
+      const chkSyncUnlimited = document.getElementById('chk-sync-unlimited');
+      const btnSyncStart = document.getElementById('btn-sync-start');
+      const btnSyncPause = document.getElementById('btn-sync-pause');
+      const btnSyncResume = document.getElementById('btn-sync-resume');
+      const btnSyncCancel = document.getElementById('btn-sync-cancel');
+      const syncProgress = document.getElementById('sync-progress');
+      const syncProgressBar = document.getElementById('sync-progress-bar');
+      const syncProgressText = document.getElementById('sync-progress-text');
+      const syncStats = document.getElementById('sync-stats');
+      const syncPages = document.getElementById('sync-pages');
+        const syncStatus = document.getElementById('sync-status');
+        const syncMode = document.getElementById('sync-mode');
+        const syncTasks = document.getElementById('sync-tasks');
+        const syncLogs = document.getElementById('sync-logs');
+        const statsNew = document.getElementById('stats-new');
+        const statsUpdated = document.getElementById('stats-updated');
+        const statsSkipped = document.getElementById('stats-skipped');
+        const statsTotal = document.getElementById('stats-total');
+      const mediaList = document.getElementById('media-list');
+      const shareOut = document.getElementById('share-out');
+      const inpShareFsids = document.getElementById('inp-share-fsids');
+      const inpSharePeriod = document.getElementById('inp-share-period');
+      const inpShareRemark = document.getElementById('inp-share-remark');
+      const btnShareCreate = document.getElementById('btn-share-create');
+      const inpShareId = document.getElementById('inp-share-id');
+      const inpSharePwd = document.getElementById('inp-share-pwd');
+      const inpShareDest = document.getElementById('inp-share-dest');
+      const inpShareFsidOne = document.getElementById('inp-share-fsid-one');
+      const btnShareQuery = document.getElementById('btn-share-query');
+      const btnShareTransfer = document.getElementById('btn-share-transfer');
+      const btnShareDlink = document.getElementById('btn-share-dlink');
+      // settings - notify
+      const inpNotifyText = document.getElementById('inp-notify-text');
+      const selNotifyType = document.getElementById('sel-notify-type');
+      const btnNotifyNow = document.getElementById('btn-notify-now');
+      const inpNotifyDelay = document.getElementById('inp-notify-delay');
+      const btnNotifySchedule = document.getElementById('btn-notify-schedule');
+      const inpNotifyInterval = document.getElementById('inp-notify-interval');
+      const btnNotifyStart = document.getElementById('btn-notify-start');
+      const btnNotifyStop = document.getElementById('btn-notify-stop');
+      const notifyScheduleBody = document.getElementById('notify-schedule-body');
+      const scheduled = { ones: [], loopId: null, loopNextAt: 0 };
+      // 通知中心控件
+      const selBcScope = document.getElementById('sel-bc-scope');
+      const selBcType = document.getElementById('sel-bc-type');
+      const selBcRole = document.getElementById('sel-bc-role');
+      const inpBcChannel = document.getElementById('inp-bc-channel');
+      const taBcUserIds = document.getElementById('ta-bc-userids');
+      const inpBcTitle = document.getElementById('inp-bc-title');
+      const taBcContent = document.getElementById('ta-bc-content');
+      const btnBcSend = document.getElementById('btn-bc-send');
+      const tipBcSend = document.getElementById('bc-send-tip');
+      const selMgType = document.getElementById('sel-mg-type');
+      const inpMgChannel = document.getElementById('inp-mg-channel');
+      const selMgRole = document.getElementById('sel-mg-role');
+      const inpMgPage = document.getElementById('inp-mg-page');
+      const inpMgSize = document.getElementById('inp-mg-size');
+      const btnMgRefresh = document.getElementById('btn-mg-refresh');
+      const mgPageInfo = document.getElementById('mg-page-info');
+      const mgBody = document.getElementById('mg-body');
+      // 对账面板逻辑
+      async function generateReconcile(){
+        const s = document.getElementById('rc-start')?.value;
+        const e = document.getElementById('rc-end')?.value;
+        const toTs = (v)=> v ? (new Date(v).getTime()/1000) : undefined;
+        const params = new URLSearchParams();
+        if(toTs(s)) params.set('start', String(toTs(s)));
+        if(toTs(e)) params.set('end', String(toTs(e)));
+        try{
+          const j = await Global.fetchJson('/api/reports/finance/reconcile' + (params.toString()?('?' + params.toString()):''));
+          const sum = j.summary||{}; const ord=sum.orders||{}; const wl=sum.wallet_logs||{};
+          const sdiv = document.getElementById('rc-summary');
+          if(sdiv){ sdiv.innerHTML = `
+            <div>订单总额: ¥${((ord.total_amount_cents||0)/100).toFixed(2)}，平台抽成: ¥${((ord.platform_fee_cents||0)/100).toFixed(2)}，卖家结算: ¥${((ord.seller_amount_cents||0)/100).toFixed(2)}</div>
+            <div class=\"text-xs text-gray-500\">sale=${wl.sale||0}, settlement=${wl.settlement||0}, refund_in=${wl.refund_in||0}, refund_out=${wl.refund_out||0}, payout_freeze=${wl.payout_freeze||0}, payout_paid=${wl.payout_paid||0}</div>`; }
+          const arr = j.anomalies||[]; const adiv = document.getElementById('rc-anomalies');
+          if(adiv){ adiv.innerHTML = arr.length? arr.map(a=>`<div class=\"border-b px-3 py-2 flex justify-between\"><div>${a.type} · ${a.reference}</div><div class=\"text-right text-gray-600 text-xs\">${a.reason||''} ${a.amount!==undefined?(' · '+a.amount):''}</div></div>`).join('') : '<div class=\"px-3 py-3 text-gray-500\">无异常</div>'; }
+          window.__lastReconcile = j;
+        }catch(e){ Global.notify('生成失败: '+(e.message||e), 'error'); }
+      }
+      document.getElementById('btn-rc-generate')?.addEventListener('click', generateReconcile);
+      document.getElementById('btn-rc-export')?.addEventListener('click', ()=>{
+        try{
+          const data = window.__lastReconcile || {};
+          const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a'); a.href=url; a.download='reconcile_report.json'; a.click(); URL.revokeObjectURL(url);
+        }catch(e){ Global.notify('导出失败: '+(e.message||e), 'error'); }
+      });
+      // 退款管理控件
+      const refundsSecId = 'sec-refunds';
+
+      function log(msg){
+        const t = new Date().toLocaleTimeString();
+        const line = `[${t}] ${msg}`;
+        console.log(line);
+        logLines.push(line);
+        if(logLines.length > LOG_MAX){
+          logLines.splice(0, logLines.length - LOG_MAX);
+        }
+        // 默认滚动到最后一页
+        const totalPages = Math.max(1, Math.ceil(logLines.length / LOG_PAGE_SIZE));
+        logPage = totalPages;
+        renderLog();
+      }
+      // ===== 通知中心：管理列表渲染与操作 =====
+      function renderManageRows(items){
+        mgBody.innerHTML = (items||[]).map(n=>{
+          const created = n.created_at ? new Date(n.created_at*1000).toLocaleString() : '';
+          const status = n.status || '-';
+          return `
+            <tr class="border-t">
+              <td class="px-3 py-2">${n.id}</td>
+              <td class="px-3 py-2">${n.user_id||'-'}</td>
+              <td class="px-3 py-2">${n.type||'-'}</td>
+              <td class="px-3 py-2">
+                <div class="font-medium">${n.title||''}</div>
+                <div class="text-xs text-gray-500 line-clamp-2">${n.content||''}</div>
+                <div class="text-xs text-gray-400">${created} · ${n.channel||'inbox'} · ${n.target_scope||''} ${n.target_role?('· '+n.target_role):''}</div>
+              </td>
+              <td class="px-3 py-2">${status}</td>
+              <td class="px-3 py-2 space-x-1">
+                <button class="px-2 py-1 border rounded text-xs" data-act="resend" data-id="${n.id}">重发</button>
+                <button class="px-2 py-1 border rounded text-xs" data-act="delete" data-id="${n.id}">删除</button>
+              </td>
+            </tr>`;
+        }).join('');
+        // 绑定操作
+        mgBody.querySelectorAll('button[data-act]').forEach(btn=>{
+          btn.addEventListener('click', async ()=>{
+            const id = btn.getAttribute('data-id');
+            const act = btn.getAttribute('data-act');
+            try{
+              if(act==='resend'){
+                const j = await Global.fetchJson(`/api/notifications/${id}/resend`, { method:'POST' });
+                Global.notify('已重发: #' + (j.notification_id||id), 'success');
+                await refreshManage();
+              }else if(act==='delete'){
+                const j = await Global.fetchJson(`/api/notifications/${id}`, { method:'DELETE' });
+                Global.notify('已删除 #' + id, 'success');
+                await refreshManage();
+              }
+            }catch(e){ Global.notify('操作失败: ' + (e.message||e), 'error'); }
+          });
+        });
+      }
+
+      async function refreshManage(){
+        try{
+          const page = Math.max(1, Number(inpMgPage.value||1));
+          const size = Math.max(1, Number(inpMgSize.value||10));
+          const params = new URLSearchParams();
+          params.set('page', String(page)); params.set('size', String(size));
+          if(selMgType.value) params.set('type', selMgType.value);
+          if(inpMgChannel.value) params.set('channel', inpMgChannel.value.trim());
+          if(selMgRole.value) params.set('role', selMgRole.value);
+          const j = await Global.fetchJson('/api/notifications/manage?' + params.toString());
+          renderManageRows(j.items||[]);
+          const next = j.has_more ? (j.next_page||page+1) : null;
+          mgPageInfo.textContent = `第 ${page} 页 · 每页 ${size} · ${j.items?(j.items.length):0} 条${next?(' · 下一页 '+next):''}`;
+        }catch(e){ Global.notify('加载管理列表失败: ' + (e.message||e), 'error'); }
+      }
+      btnMgRefresh?.addEventListener('click', refreshManage);
+
+      // ===== 退款管理（简版） =====
+      async function loadRefunds(status){
+        try{
+          const params = new URLSearchParams(); if(status) params.set('status', status);
+          const j = await Global.fetchJson('/api/refund-requests?' + params.toString());
+          const box = document.getElementById('refunds-list');
+          if(!box) return;
+          box.innerHTML = (j.items||[]).map(it=>{
+            const created = it.created_at ? new Date(it.created_at*1000).toLocaleString() : '';
+            const amt = (it.amount_cents/100).toFixed(2);
+            return `<div class="border-b p-3 text-sm flex items-center justify-between">
+              <div>
+                <div class="font-medium">#${it.id} · 订单 ${it.order_id} · ¥${amt}</div>
+                <div class="text-gray-500">买家:${it.buyer_id} 卖家:${it.seller_id} · ${created} · 状态:${it.status}</div>
+                <div class="text-gray-400">原因:${it.reason||''}</div>
+              </div>
+              <div class="flex gap-2">
+                ${it.status==='pending'?`<button class=\"px-2 py-1 border rounded text-xs\" data-act=\"approve\" data-id=\"${it.id}\">通过</button>
+                <button class=\"px-2 py-1 border rounded text-xs\" data-act=\"reject\" data-id=\"${it.id}\">拒绝</button>`:''}
+                ${it.status==='approved'?`<button class=\"px-2 py-1 border rounded text-xs\" data-act=\"process\" data-id=\"${it.id}\">处理退款</button>`:''}
+              </div>
+            </div>`; }).join('');
+          box.querySelectorAll('button[data-act]').forEach(btn=>{
+            btn.addEventListener('click', async ()=>{
+              const id = Number(btn.getAttribute('data-id'));
+              const act = btn.getAttribute('data-act');
+              try{
+                if(act==='approve' || act==='reject'){
+                  const status = act==='approve'?'approved':'rejected';
+                  const remark = prompt('备注(Optional)：')||'';
+                  const j2 = await Global.fetchJson(`/api/orders/${currentRefundOrderId||0}/refund/review`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ refund_id: id, status, remark })});
+                  if(j2.status==='success'){ Global.notify('审核成功','success'); loadRefunds(status==='approved'?'approved':'pending'); }
+                  else { Global.notify('审核失败: '+(j2.message||''),'error'); }
+                } else if(act==='process'){
+                  const remark = prompt('处理备注(Optional)：')||'';
+                  const j3 = await Global.fetchJson(`/api/refund-requests/${id}/process`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ operator_id:'admin', remark })});
+                  if(j3.status==='success'){ Global.notify('退款已处理','success'); loadRefunds('processed'); }
+                  else { Global.notify('处理失败: '+(j3.message||''),'error'); }
+                }
+              }catch(e){ Global.notify('操作失败: '+(e.message||e), 'error'); }
+            });
+          });
+        }catch(e){ Global.notify('加载退款列表失败: ' + (e.message||e), 'error'); }
+      }
+
+      // ===== 通知中心：广播发送 =====
+      btnBcSend?.addEventListener('click', async ()=>{
+        try{
+          tipBcSend.textContent = '发送中...';
+          const scope = selBcScope.value || 'all';
+          const payload = {
+            scope,
+            role: selBcRole.value || undefined,
+            title: (inpBcTitle.value||'').trim() || '系统通知',
+            content: (taBcContent.value||'').trim() || '',
+            type: selBcType.value || 'info',
+            channel: (inpBcChannel.value||'inbox').trim() || 'inbox'
+          };
+          if(scope==='user'){
+            const list = (taBcUserIds.value||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+            if(list.length===0){ Global.notify('scope=user 时，请填写用户ID列表', 'warn'); tipBcSend.textContent=''; return; }
+            payload.user_ids = list;
+          }
+          const j = await Global.fetchJson('/api/notifications/broadcast', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+          Global.notify('广播已发送', 'success');
+          tipBcSend.textContent = '已发送';
+          await refreshManage();
+          setTimeout(()=>{ tipBcSend.textContent=''; }, 1200);
+        }catch(e){ Global.notify('发送失败: ' + (e.message||e), 'error'); tipBcSend.textContent=''; }
+      });
+      function logTask(task, msg){
+        const id = task && task.id ? String(task.id) : '-';
+        const cid = (typeof clientId !== 'undefined' && clientId) ? clientId : '-';
+        log(`#${id} [cid:${cid}] ${msg}`);
+      }
+      // 将全局通知同步写到调试日志（不改变原有通知行为）
+      try{
+        if(window.Global){
+          const original = (typeof Global.notify === 'function') ? Global.notify.bind(Global) : null;
+          Global.notify = function(message, type){
+            let shown = false;
+            if(original){
+              try{ original(message, type); shown = true; }catch(_){ shown = false; }
+            }
+            if(!shown){
+              // 最小化兜底通知
+              try{
+                let root = document.getElementById('notify-root');
+                if(!root){ root = document.createElement('div'); root.id='notify-root'; root.style.position='fixed'; root.style.top='16px'; root.style.right='16px'; root.style.zIndex='9999'; document.body.appendChild(root); }
+                const item = document.createElement('div');
+                item.className = 'notify-item ' + (type || 'info');
+                item.textContent = message;
+                root.appendChild(item);
+                setTimeout(()=>{ item.classList.add('show'); }, 10);
+                setTimeout(()=>{ item.classList.remove('show'); setTimeout(()=> item.remove(), 250); }, 3000);
+              }catch(_){}
+            }
+            try{ log(`[notify:${type||'info'}] ${message}`); }catch(_){}
+          };
+          // 页面加载一次性提示，便于确认生效
+          setTimeout(()=>{ try{ Global.notify('通知系统就绪', 'info'); }catch(_){} }, 50);
+        }
+      }catch(_){}
+
+      // 简单的单页切换：点击侧边栏，显示对应 section，隐藏其他
+      function switchSection(secId){
+        document.querySelectorAll('.js-sec').forEach(el=>{
+          if(el.id === secId){ el.classList.remove('hidden'); }
+          else { el.classList.add('hidden'); }
+        });
+      }
+      document.querySelectorAll('#sidebar a[data-sec]').forEach(a=>{
+        a.addEventListener('click', (e)=>{
+          e.preventDefault();
+          const sec = a.getAttribute('data-sec');
+          switchSection(sec);
+          // 进入/离开 下载区时控制轮询
+          if(sec !== 'sec-download'){ stopPolling(); }
+          if(sec === 'sec-refunds'){
+            try{ loadRefunds(document.getElementById('sel-refund-status')?.value||''); }catch(_){ }
+          }
+          if(sec === 'sec-reconcile'){
+            try{ generateReconcile(); }catch(_){ }
+          }
+        });
+      });
+
+      // manage subtabs switching
+      function switchManage(tab){
+        document.querySelectorAll('#sec-manage .tab-manage').forEach(btn=>{
+          if(btn.getAttribute('data-tab') === tab){
+            btn.classList.add('bg-gray-50');
+          } else {
+            btn.classList.remove('bg-gray-50');
+          }
+        });
+        document.querySelectorAll('#sec-manage .js-op').forEach(el=>{
+          el.classList.toggle('hidden', el.id !== 'op-' + tab);
+        });
+      }
+      document.querySelectorAll('#sec-manage .tab-manage').forEach(btn=>{
+        btn.addEventListener('click', (e)=>{
+          e.preventDefault();
+          const tab = btn.getAttribute('data-tab');
+          switchManage(tab);
+        });
+      });
+
+      async function refreshStatus(){
+        try{
+          log('请求 /oauth/status');
+          const j = await Global.fetchJson('/oauth/status');
+          statusText.textContent = '状态：' + (j.authorized ? '已授权（本次会话）' : '未授权');
+          Global.notify('状态已刷新', 'success');
+        }catch(e){
+          statusText.textContent = '状态：获取失败';
+          log('获取状态失败: ' + (e.message || e));
+          Global.notify('获取状态失败: ' + (e.message || e), 'error');
+        }
+      }
+
+      async function resetSession(){
+        try{
+          log('POST /oauth/reset');
+          const j = await Global.fetchJson('/oauth/reset', { method: 'POST' });
+          log('重置完成: ' + JSON.stringify(j));
+          Global.notify('会话已重置', 'success');
+          await refreshStatus();
+        }catch(e){
+          log('重置失败: ' + (e.message || e));
+          Global.notify('重置失败: ' + (e.message || e), 'error');
+        }
+      }
+
+      async function loadUser(){
+        try{
+          log('GET /user/info');
+          const j = await Global.fetchJson('/user/info');
+          userBox.textContent = JSON.stringify(j, null, 2);
+          Global.notify('已获取用户信息', 'success');
+        }catch(e){
+          userBox.textContent = '加载失败: ' + (e.message || e);
+          Global.notify('加载失败: ' + (e.message || e), 'error');
+        }
+      }
+
+      async function loadAuth(){
+        try{
+          log('GET /auth/result');
+          const j = await Global.fetchJson('/auth/result');
+          authBox.textContent = JSON.stringify(j, null, 2);
+          Global.notify('已获取授权结果', 'success');
+        }catch(e){
+          authBox.textContent = '加载失败: ' + (e.message || e);
+          Global.notify('加载失败: ' + (e.message || e), 'error');
+        }
+      }
+
+      // 当用 python -m http.server 打开静态文件时，/login 是后端路由，不存在；改为跳转本地 login.html
+      const navLogin = document.getElementById('nav-login');
+      if(location.port && location.port !== '8000'){
+        if(navLogin) navLogin.href = 'login.html';
+        openLogin?.addEventListener('click', (e)=>{ e.preventDefault(); window.open('login.html', '_blank'); });
+      } else {
+        openLogin?.addEventListener('click', (e)=>{ e.preventDefault(); window.open('/login', '_blank'); });
+      }
+
+      btnRefresh?.addEventListener('click', refreshStatus);
+      btnReset?.addEventListener('click', resetSession);
+      btnSetToken?.addEventListener('click', async ()=>{
+        try{
+          const access = (inpAccess && inpAccess.value || '').trim();
+          const refresh = (inpRefresh && inpRefresh.value || '').trim();
+          if(!access){ Global.notify('请先粘贴 access_token', 'warn'); return; }
+          const j = await Global.fetchJson('/oauth/set_token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ access_token: access, refresh_token: refresh })
+          });
+          Global.notify('已设置临时 token，并已写入 .env', 'success');
+          await refreshStatus();
+        }catch(e){
+          Global.notify('设置失败: ' + (e.message || e), 'error');
+        }
+      });
+
+      btnLoadFiles?.addEventListener('click', async ()=>{
+        try{
+          const dir = (inpDir && inpDir.value || '/').trim() || '/';
+          log('GET /api/files?dir=' + dir);
+          const res = await Global.api.listFiles({ path: dir, start: 0, limit: 100 });
+          filesList.textContent = JSON.stringify(res, null, 2);
+          Global.notify('已加载文件列表', 'success');
+        }catch(e){
+          filesList.textContent = '加载失败: ' + (e.message || e);
+          Global.notify('加载失败: ' + (e.message || e), 'error');
+        }
+      });
+
+      btnSearch?.addEventListener('click', async ()=>{
+        try{
+          const key = (inpKey && inpKey.value || '').trim();
+          const dir = (inpKeyDir && inpKeyDir.value || '/').trim() || '/';
+          if(!key){ Global.notify('请输入关键字', 'warn'); return; }
+          log('GET /api/search');
+          const res = await Global.api.search({ keyword: key, path: dir, start: 0, limit: 100 });
+          searchList.textContent = JSON.stringify(res, null, 2);
+          Global.notify('搜索完成', 'success');
+        }catch(e){
+          searchList.textContent = '搜索失败: ' + (e.message || e);
+          Global.notify('搜索失败: ' + (e.message || e), 'error');
+        }
+      });
+
+      // 下载：单文件
+      btnDlOne?.addEventListener('click', async ()=>{
+        try{
+          const remote = (inpDlRemote.value||'').trim();
+          const local = (inpDlLocal.value||'').trim() || undefined;
+          if(!remote){ Global.notify('请输入网盘路径', 'warn'); return; }
+          const res = await Global.api.taskEnqueue({ remote_path: remote, local_path: local, client_id: clientId });
+          downloadOut.textContent = JSON.stringify(res, null, 2);
+          Global.notify('已入队任务', 'success');
+          startPolling();
+        }catch(e){ downloadOut.textContent = String(e); Global.notify('下载失败: ' + (e.message||e), 'error'); }
+      });
+
+      // 下载：批量
+      // 移除"开始批量下载(服务器)"功能，仅保留浏览器批量下载
+
+      function triggerHiddenDownload(url){
+        try{
+          const iframe = document.createElement('iframe');
+          iframe.style.display = 'none';
+          iframe.referrerPolicy = 'no-referrer';
+          iframe.src = url;
+          document.body.appendChild(iframe);
+          setTimeout(()=>{ try{ iframe.remove(); }catch(_){} }, 30000);
+        }catch(_){ /* ignore */ }
+      }
+      // 旧的"浏览器直链下载"按钮立即入队使用探测逻辑（不使用 <a> 导航）
+      btnDlBrowser?.addEventListener('click', async ()=>{
+        try{
+          const remote = (inpDlRemote.value||'').trim();
+          if(!remote){ Global.notify('请输入网盘路径', 'warn'); return; }
+          enqueueBrowserDownload(remote);
+        }catch(e){ Global.notify('浏览器下载失败: ' + (e.message||e), 'error'); }
+      });
+
+      // 上传：multipart/form-data 调用 /api/netdisk/upload（SDK优先，后备HTTP），支持多文件并发=3
+      btnUpload?.addEventListener('click', async ()=>{
+        try{
+          const files = (inpUpFile && inpUpFile.files) ? Array.from(inpUpFile.files) : [];
+          const remote = (inpUpRemote && inpUpRemote.value || '').trim();
+          const selOnDup = document.getElementById('sel-up-ondup');
+          const ondup = selOnDup ? selOnDup.value : 'ask';
+          if(!files.length){ Global.notify('请先选择文件', 'warn'); return; }
+          files.forEach(f=> uploadQueue.push({ file: f, remote, ondup, status: 'Queued', note: '' }));
+          renderUploadQueue();
+          uploadOut.textContent = `已加入 ${files.length} 个文件到上传队列`;
+          runNextUploads();
+        }catch(e){ uploadOut.textContent = String(e); Global.notify('上传异常: ' + (e.message||e), 'error'); }
+      });
+
+      function isRetryable(err){
+        if(!err) return false;
+        const code = err.error_code || err.code || err.errno;
+        const msg = String(err.error_msg||err.message||'').toLowerCase();
+        if(code===31034 || code===31326) return true;
+        if(msg.includes('frequency') || msg.includes('authorized')) return true;
+        return false;
+      }
+      function enqueueBrowserDownload(path){
+        const id = 'B-' + Date.now();
+        const task = { id, remote_path: path, local_path: '本机(浏览器)', status: 'Browser', progress: '', attempts: 0, max_retries: 5, backoff_base: 5 };
+        task.owner = clientId; // 与后端队列的 client_id 语义一致
+        browserTasks.unshift(task);
+        if(browserTasks.length>200) browserTasks.length=200;
+        renderTasks([]);
+        logTask(task, '入队浏览器下载: ' + path);
+        // 直接触发基于 path 的后端重定向下载，无需探测
+        try{
+          const usp = new URLSearchParams({ path: task.remote_path, redirect: '1' });
+          const url = `/api/download?${usp.toString()}`;
+          triggerHiddenDownload(url);
+          task.status = 'Completed';
+          task.progress = 100;
+          renderTasks([]);
+          logTask(task, '浏览器下载已触发');
+          Global.notify('已触发浏览器下载', 'success');
+        }catch(e){
+          task.status = 'Failed';
+          task.last_error = { error_msg: e.message||String(e) };
+          renderTasks([]);
+          logTask(task, '浏览器下载失败(异常): ' + (e.message||e));
+          Global.notify('浏览器下载失败', 'error');
+        }
+      }
+
+      // 批量浏览器下载：使用与单个相同的入队与探测逻辑
+      btnDlManyBrowser?.addEventListener('click', async ()=>{
+        try{
+          const text = (inpDlRemotes.value||'').trim();
+          const arr = text ? text.split(/\r?\n/).map(s=>s.trim()).filter(Boolean) : [];
+          if(!arr.length){ Global.notify('请填写至少一个网盘路径', 'warn'); return; }
+          arr.forEach(p=> enqueueBrowserDownload(p));
+          Global.notify(`已加入浏览器下载队列: ${arr.length} 个`, 'success');
+        }catch(e){ Global.notify('批量浏览器下载失败: ' + (e.message||e), 'error'); }
+      });
+
+      // ====== 后端任务队列轮询渲染 ======
+      let pollTimer = null;
+      let emptyTicks = 0;
+      function renderTasks(tasks){
+        if(!dlQueueBody) return;
+        const merged = [...browserTasks, ...tasks];
+        dlQueueBody.innerHTML = merged.map(item=>{
+          const prog = (item.progress!=null && item.progress!=='')? `${item.progress}%` : (item.status==='Queued'?'0%':'');
+          const attempts = (item.attempts!=null)? String(item.attempts) : '';
+          const nextRetry = item.next_retry_at? formatRetryTime(item.next_retry_at) : '';
+          const lastErr = compactError(item.last_error);
+          const fullPath = item.remote_path||'';
+          const shortPath = truncate(fullPath, 48);
+          return `<tr class="border-t">
+            <td class="px-3 py-2 text-gray-500">${item.id}</td>
+            <td class="px-3 py-2 mono" title="${escapeHtml(fullPath)}">${escapeHtml(shortPath)}</td>
+            <td class="px-3 py-2">${attempts}</td>
+            <td class="px-3 py-2 text-gray-500">${escapeHtml(nextRetry)}</td>
+            <td class="px-3 py-2 mono text-gray-600" title="${escapeHtml(lastErr)}">${escapeHtml(truncate(lastErr, 56))}</td>
+            <td class="px-3 py-2">${item.status}</td>
+            <td class="px-3 py-2">${prog}</td>
+          </tr>`;
+        }).join('');
+      }
+      function escapeHtml(s){
+        return String(s).replace(/[&<>"']/g, c=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+      }
+      function truncate(s, n){
+        const str = String(s||'');
+        return str.length>n? (str.slice(0, n-1) + '…') : str;
+      }
+      function formatRetryTime(v){
+        try{
+          const ts = typeof v === 'number' ? v : Number(v);
+          if(!isFinite(ts) || ts<=0) return '';
+          const d = new Date(ts*1000);
+          const now = Date.now();
+          const diffMs = d.getTime() - now;
+          const ahead = diffMs>0? Math.round(diffMs/1000) : 0;
+          const hh = String(d.getHours()).padStart(2,'0');
+          const mm = String(d.getMinutes()).padStart(2,'0');
+          const ss = String(d.getSeconds()).padStart(2,'0');
+          return `${hh}:${mm}:${ss}${ahead?` (+${ahead}s)`:''}`;
+        }catch(_){ return ''; }
+      }
+      function compactError(err){
+        if(!err) return '';
+        if(typeof err === 'string') return err;
+        try{ return JSON.stringify(err); }catch(_){ return String(err); }
+      }
+      async function pollTasksOnce(){
+        try{
+          const j = await Global.api.taskList(clientId);
+          const list = (j && j.tasks) || [];
+          renderTasks(list);
+          // 队列连续为空则自动停止轮询，避免后台日志刷屏
+          if(list.length === 0){
+            emptyTicks++;
+            if(emptyTicks >= 5){ stopPolling(); }
+          } else {
+            emptyTicks = 0;
+          }
+        }catch(e){ log('任务轮询失败: ' + (e.message||e)); }
+      }
+      function startPolling(){ if(!pollTimer){ emptyTicks = 0; pollTimer = setInterval(pollTasksOnce, 1000); } }
+      function stopPolling(){ if(pollTimer){ clearInterval(pollTimer); pollTimer=null; } }
+
+      btnQueueStart?.addEventListener('click', async ()=>{ await Global.api.taskControl('resume', clientId); startPolling(); });
+      btnQueuePause?.addEventListener('click', async ()=>{ await Global.api.taskControl('pause', clientId); });
+      btnQueueClear?.addEventListener('click', async ()=>{ await Global.api.taskControl('clear_all', clientId); pollTasksOnce(); });
+      btnQueueClearDone?.addEventListener('click', async ()=>{ await Global.api.taskControl('clear_done', clientId); pollTasksOnce(); });
+      // 初始不自动轮询，避免后台日志刷屏
+
+      btnCopyDo?.addEventListener('click', async ()=>{
+        try{
+          const payload = { source_path: (inpCopySrc.value||'').trim(), dest_path: (inpCopyDst.value||'').trim(), ondup: (selCopyOnDup && selCopyOnDup.value) || 'newcopy' };
+          if(!payload.source_path || !payload.dest_path){ Global.notify('请输入源与目标路径', 'warn'); return; }
+          const res = await Global.api.copy(payload);
+          manageOut.textContent = JSON.stringify(res, null, 2);
+          Global.notify('复制完成', 'success');
+        }catch(e){ manageOut.textContent = String(e); Global.notify('复制失败: ' + (e.message||e), 'error'); }
+      });
+      btnMoveDo?.addEventListener('click', async ()=>{
+        try{
+          const payload = { source_path: (inpMoveSrc.value||'').trim(), dest_path: (inpMoveDst.value||'').trim(), ondup: (selMoveOnDup && selMoveOnDup.value) || 'fail' };
+          if(!payload.source_path || !payload.dest_path){ Global.notify('请输入源与目标路径', 'warn'); return; }
+          const res = await Global.api.move(payload);
+          manageOut.textContent = JSON.stringify(res, null, 2);
+          Global.notify('移动完成', 'success');
+        }catch(e){ manageOut.textContent = String(e); Global.notify('移动失败: ' + (e.message||e), 'error'); }
+      });
+      btnDelDo?.addEventListener('click', async ()=>{
+        try{
+          const payload = { file_path: (inpDelPath.value||'').trim(), confirm: !!chkDelConfirm.checked };
+          if(!payload.file_path){ Global.notify('请输入删除路径', 'warn'); return; }
+          if(!payload.confirm){ Global.notify('请勾选"确认删除"', 'warn'); return; }
+          const res = await Global.api.remove(payload);
+          manageOut.textContent = JSON.stringify(res, null, 2);
+          Global.notify('删除完成', 'success');
+        }catch(e){ manageOut.textContent = String(e); Global.notify('删除失败: ' + (e.message||e), 'error'); }
+      });
+      btnRenDo?.addEventListener('click', async ()=>{
+        try{
+          const payload = { file_path: (inpRenPath2.value||'').trim(), new_name: (inpRenNew2.value||'').trim(), ondup: (selRenameOnDup && selRenameOnDup.value) || 'overwrite' };
+          if(!payload.file_path || !payload.new_name){ Global.notify('请输入重命名路径与新名称', 'warn'); return; }
+          const res = await Global.api.rename(payload);
+          manageOut.textContent = JSON.stringify(res, null, 2);
+          Global.notify('重命名完成', 'success');
+        }catch(e){ manageOut.textContent = String(e); Global.notify('重命名失败: ' + (e.message||e), 'error'); }
+      });
+
+      // 默认子标签为复制
+      switchManage('copy');
+
+      btnMediaList?.addEventListener('click', async ()=>{
+        try{
+          const dir = (inpMediaDir.value||'/').trim() || '/';
+          const catRaw = selMediaCat && selMediaCat.value;
+          const category = catRaw? Number(catRaw) : undefined;
+          // loading on
+          if(mediaLoading) mediaLoading.classList.remove('hidden');
+          btnMediaList.disabled = true; btnMediaList.classList.add('opacity-60','cursor-not-allowed');
+          const res = await Global.api.mediaList({ path: dir, recursion: 1, start: 0, limit: 200, order:'time', desc:1, category, web: 1 });
+          try{
+            console.debug('[multimedia:list] response', res);
+            const dbg = document.getElementById('media-debug');
+            if(dbg){
+              const ts = new Date().toLocaleTimeString();
+              const len = JSON.stringify(res).length;
+              dbg.classList.remove('hidden');
+              const method = (res&&res.routed_method)||'unknown'; const cat=(res&&res.selected_category);
+              dbg.innerHTML = `<div class=\"mb-2\">[${ts}] list 返回长度: ${len} 字符 | method=${method} | category=${cat}</div>` +
+                `<details class=\"mb-2\"><summary class=\"cursor-pointer\">展开 JSON</summary><pre class=\"whitespace-pre-wrap\">${(JSON.stringify(res,null,2)).replace(/[&<>]/g, s=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[s]))}</pre></details>` +
+                (dbg.innerHTML||'');
+            }
+          }catch(_){ }
+          const files = Array.isArray(res?.files) ? res.files : [];
+          // Strict client-side filtering by selected category and non-folders
+          const filtered = files.filter(it => it && it.isdir === 0 && (category ? it.category === category : true));
+          if(category === 3){
+            // Image category: render thumbnails when available
+            const imgItems = filtered.filter(it => it.thumbs && (it.thumbs.url3 || it.thumbs.url2 || it.thumbs.url1));
+            if(imgItems.length){
+              const html = [
+                '<div class="text-xs text-gray-600 mb-2">共 '+imgItems.length+' 张图片（仅展示有缩略图的文件）</div>',
+                '<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">',
+                ...imgItems.map(it=>{
+                  const url = it.thumbs.url3 || it.thumbs.url2 || it.thumbs.url1;
+                  const title = (it.server_filename || it.path || '')
+                    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                  return `<div class=\"border rounded p-2 bg-white shadow-sm\"><img src=\"${url}\" alt=\"thumb\" class=\"w-full h-28 object-cover rounded mb-1\"/><div class=\"text-[11px] truncate\" title=\"${title}\">${title}</div></div>`;
+                }),
+                '</div>'
+              ].join('');
+              mediaList.innerHTML = html;
+            } else {
+              const msg = filtered.length
+                ? '未获取到缩略图，已过滤出 '+filtered.length+' 个图片文件（目录已排除）'
+                : '未找到符合条件的文件（已排除目录）';
+              mediaList.innerHTML = '<div class="text-xs text-gray-600">'+msg+'</div>';
+            }
+          } else if (category){
+            // Non-image categories: render a concise list of files only
+            if(filtered.length === 0){
+              mediaList.innerHTML = '<div class="text-xs text-gray-600">未找到符合条件的文件（已排除目录）</div>';
+            } else {
+              const html = [
+                '<div class="text-xs text-gray-600 mb-2">共 '+filtered.length+' 项</div>',
+                '<div class="divide-y">',
+                ...filtered.map(it=>{
+                  const title = (it.server_filename || it.path || '')
+                    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+                  const size = (it.size||0);
+                  const kb = (size/1024).toFixed(1)+' KB';
+                  return `<div class=\"py-2 text-xs flex items-center justify-between\"><div class=\"truncate\" title=\"${title}\">${title}</div><div class=\"text-gray-500 ml-3 whitespace-nowrap\">${kb}</div></div>`;
+                }),
+                '</div>'
+              ].join('');
+              mediaList.innerHTML = html;
+            }
+          } else {
+            // No category selected: fallback to raw JSON
+            mediaList.textContent = JSON.stringify(res, null, 2);
+          }
+          Global.notify('已加载多媒体列表', 'success');
+        }catch(e){ mediaList.textContent = String(e); Global.notify('加载失败: ' + (e.message||e), 'error'); }
+        finally{ if(mediaLoading) mediaLoading.classList.add('hidden'); btnMediaList.disabled=false; btnMediaList.classList.remove('opacity-60','cursor-not-allowed'); }
+      });
+
+      btnCatinfo?.addEventListener('click', async ()=>{
+        try{
+          if(btnCatinfo){ btnCatinfo.disabled = true; btnCatinfo.classList.add('opacity-60','cursor-not-allowed'); }
+          const loading = document.getElementById('catinfo-loading'); if(loading) loading.classList.remove('hidden');
+          const dir = (inpCatinfoDir.value||'/').trim() || '/';
+          const category = Number(selCatinfoCat && selCatinfoCat.value || 3);
+          const recursion = (chkCatinfoRec && chkCatinfoRec.checked) ? 1 : 0;
+          const res = await Global.api.categoryInfo({ parent_path: dir, category, recursion });
+          const ts = new Date().toLocaleTimeString();
+          const safe = (s)=> String(s||'').replace(/[&<>]/g, t=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[t]));
+          catinfoOut.innerHTML = `<div class=\"mb-2\">[${ts}] 目录=${safe(dir)} 类别=${category} 递归=${recursion} → count=${safe(res&&res.count)} total=${safe(res&&res.total)} size=${safe(res&&res.size)}</div>` +
+            `<details class=\"mb-2\"><summary class=\"cursor-pointer\">展开 JSON</summary><pre class=\"whitespace-pre-wrap\">${safe(JSON.stringify(res,null,2))}</pre></details>`;
+        }catch(e){ Global.notify('分类总数获取失败: '+(e.message||e),'error'); }
+        finally{
+          if(btnCatinfo){ btnCatinfo.disabled = false; btnCatinfo.classList.remove('opacity-60','cursor-not-allowed'); }
+          const loading = document.getElementById('catinfo-loading'); if(loading) loading.classList.add('hidden');
+        }
+      });
+
+      // 同步功能
+      let currentSyncId = null;
+      let syncPollTimer = null;
+
+      // 开始同步
+      // 全量同步复选框交互
+      chkSyncUnlimited?.addEventListener('change', ()=>{
+        if(chkSyncUnlimited.checked){
+          inpSyncPages.disabled = true;
+          inpSyncPages.value = '';
+          inpSyncPages.placeholder = '全量同步模式';
+          inpSyncPages.title = '全量同步模式：同步所有文件，耗时较长，易触频控';
+        } else {
+          inpSyncPages.disabled = false;
+          inpSyncPages.value = '2';
+          inpSyncPages.placeholder = '页数';
+          inpSyncPages.title = '同步页数（每页1000条，测试参数）';
+        }
+      });
+
+      btnSyncStart?.addEventListener('click', async ()=>{
+        try{
+          const path = (inpSyncPath && inpSyncPath.value || '/').trim() || '/';
+          const isUnlimited = chkSyncUnlimited && chkSyncUnlimited.checked;
+          const maxPages = isUnlimited ? 0 : (parseInt(inpSyncPages && inpSyncPages.value || '2') || 2);
+          
+          if(!path){ Global.notify('请输入同步路径', 'warn'); return; }
+          
+          // 全量同步确认
+          if(isUnlimited){
+            const confirmed = confirm('全量同步将同步所有文件，耗时较长且容易触发频控限制。确定要继续吗？');
+            if(!confirmed){
+              return;
+            }
+          }
+          
+          btnSyncStart.disabled = true;
+          btnSyncStart.classList.add('opacity-60', 'cursor-not-allowed');
+          
+          log(`POST /api/sync/start - 路径: ${path}, 页数: ${maxPages}`);
+          const res = await fetch('/api/sync/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json; charset=utf-8' },
+            body: JSON.stringify({ 
+              path: path, 
+              client_id: Global._cid,
+              max_pages: maxPages
+            })
+          });
+          const data = await res.json();
+          
+          if(data.status === 'success'){
+            currentSyncId = data.sync_id;
+            syncProgress.classList.remove('hidden');
+            btnSyncStart.classList.add('hidden');
+            btnSyncPause.classList.remove('hidden');
+            btnSyncCancel.classList.remove('hidden');
+            
+            const syncMode = data.is_resume ? '断点续跑' : '全新同步';
+            addSyncLog(`开始同步目录: ${path} (任务ID: ${currentSyncId}, 模式: ${syncMode})`);
+            startSyncPolling();
+            Global.notify(data.message || '同步任务已启动', 'success');
+
+            // 立即驱动后端分页扫描（全量/限量）
+            try{
+              await runSyncTask(path, maxPages);
+            }catch(e){
+              addSyncLog('同步执行中断: ' + (e.message||e));
+              Global.notify('同步执行中断', 'error');
+            }
+          } else {
+            throw new Error(data.error || '启动同步失败');
+          }
+        }catch(e){
+          addSyncLog('启动同步失败: ' + (e.message||e));
+          Global.notify('启动同步失败: ' + (e.message||e), 'error');
+        }finally{
+          btnSyncStart.disabled = false;
+          btnSyncStart.classList.remove('opacity-60', 'cursor-not-allowed');
+        }
+      });
+
+      // 暂停同步
+      btnSyncPause?.addEventListener('click', async ()=>{
+        if(!currentSyncId) return;
+        try{
+          const res = await fetch(`/api/sync/pause/${currentSyncId}`, { method: 'POST' });
+          const data = await res.json();
+          
+          if(data.status === 'success'){
+            btnSyncPause.classList.add('hidden');
+            btnSyncResume.classList.remove('hidden');
+            addSyncLog('同步任务已暂停');
+            Global.notify('同步已暂停', 'info');
+          }
+        }catch(e){
+          addSyncLog('暂停同步失败: ' + (e.message||e));
+        }
+      });
+
+      // 恢复同步
+      btnSyncResume?.addEventListener('click', async ()=>{
+        if(!currentSyncId) return;
+        try{
+          const res = await fetch(`/api/sync/resume/${currentSyncId}`, { method: 'POST' });
+          const data = await res.json();
+          
+          if(data.status === 'success'){
+            btnSyncResume.classList.add('hidden');
+            btnSyncPause.classList.remove('hidden');
+            addSyncLog('同步任务已恢复');
+            Global.notify('同步已恢复', 'success');
+          }
+        }catch(e){
+          addSyncLog('恢复同步失败: ' + (e.message||e));
+        }
+      });
+
+      // 取消同步
+      btnSyncCancel?.addEventListener('click', async ()=>{
+        if(!currentSyncId) return;
+        try{
+          const res = await fetch(`/api/sync/${currentSyncId}`, { method: 'DELETE' });
+          const data = await res.json();
+          
+          if(data.status === 'success'){
+            stopSyncPolling();
+            resetSyncUI();
+            addSyncLog('同步任务已取消');
+            Global.notify('同步已取消', 'info');
+          }
+        }catch(e){
+          addSyncLog('取消同步失败: ' + (e.message||e));
+        }
+      });
+
+      // 同步轮询
+      function startSyncPolling(){
+        if(syncPollTimer) return;
+        syncPollTimer = setInterval(pollSyncStatus, 2000);
+      }
+
+      function stopSyncPolling(){
+        if(syncPollTimer){
+          clearInterval(syncPollTimer);
+          syncPollTimer = null;
+        }
+      }
+
+      async function pollSyncStatus(){
+        if(!currentSyncId) return;
+        
+        try{
+          const res = await fetch(`/api/sync/status/${currentSyncId}`);
+          const data = await res.json();
+          
+          if(data.status === 'completed'){
+            updateSyncProgress(data);
+            addSyncLog(`同步完成: 共处理 ${data.processed_files} 个文件`);
+            stopSyncPolling();
+            resetSyncUI();
+            Global.notify('同步完成', 'success');
+          } else if(data.status === 'failed'){
+            addSyncLog('同步失败');
+            stopSyncPolling();
+            resetSyncUI();
+            Global.notify('同步失败', 'error');
+          } else {
+            updateSyncProgress(data);
+          }
+        }catch(e){
+          addSyncLog('获取同步状态失败: ' + (e.message||e));
+        }
+      }
+
+      // 驱动后端 step/finish 的执行循环
+      async function runSyncTask(path, maxPages){
+        const unlimited = (maxPages === 0);
+        let page = 0;
+        let hasMore = true;
+        while(hasMore && (unlimited || page < maxPages)){
+          try{
+            const res = await fetch('/api/sync/step', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json; charset=utf-8' },
+              body: JSON.stringify({ path: path, limit: 1000 })
+            });
+            const data = await res.json();
+            if(data && data.status === 'success'){
+              page += 1;
+              hasMore = !!data.has_more && !data.hit_since_boundary;
+              // 轻微节流，避免触发频控
+              await new Promise(r=>setTimeout(r, 300));
+            }else{
+              const em = (data && (data.message||data.error)) || 'unknown';
+              const errno = data && data.errno;
+              const ecode = data && data.error_code;
+              if(errno) addSyncLog(`步进失败 errno=${errno} code=${ecode||''}: ${em}`);
+              else addSyncLog('步进失败: ' + em);
+              // 对可能恢复的频控/限流错误做有限重试
+              const shouldRetry = ecode && (String(ecode).includes('31066') || String(ecode).includes('429'));
+              if(shouldRetry){
+                for(let i=1;i<=3;i++){
+                  addSyncLog(`频控触发，${i}/3 次重试，退避 ${300*i}ms`);
+                  await new Promise(r=>setTimeout(r, 300*i));
+                  const r2 = await fetch('/api/sync/step', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json; charset=utf-8' },
+                    body: JSON.stringify({ path: path, limit: 1000 })
+                  });
+                  const d2 = await r2.json();
+                  if(d2 && d2.status === 'success'){
+                    page += 1;
+                    hasMore = !!d2.has_more && !d2.hit_since_boundary;
+                    await new Promise(r=>setTimeout(r, 300));
+                    break;
+                  }
+                  if(i===3){ addSyncLog('频控重试仍失败，停止本次同步'); }
+                }
+              }
+              if(data && data.hit_since_boundary){
+                addSyncLog('已到增量边界（无新文件），停止。');
+              }
+              break;
+            }
+          }catch(e){
+            addSyncLog('步进异常: ' + (e.message||e));
+            break;
+          }
+        }
+        try{
+          const resF = await fetch('/api/sync/finish', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json; charset=utf-8' },
+            body: JSON.stringify({ path: path })
+          });
+          const dataF = await resF.json();
+          if(!(dataF && dataF.status === 'success')){
+            addSyncLog('收尾失败: ' + ((dataF && (dataF.message||dataF.error)) || 'unknown'));
+          }
+        }catch(e){
+          addSyncLog('收尾异常: ' + (e.message||e));
+        }
+      }
+
+        function updateSyncProgress(data){
+          const progress = Math.round(data.progress * 100);
+          syncProgressBar.style.width = progress + '%';
+          syncProgressText.textContent = progress + '%';
+          syncStats.textContent = `已处理: ${data.processed_files} / 总计: ${data.total_files}`;
+          
+          // 显示页数信息（全量同步时显示特殊信息）
+          if (data.is_unlimited) {
+            syncPages.textContent = `页数: ${data.current_page || 0} / 全量同步`;
+          } else {
+            syncPages.textContent = `页数: ${data.current_page || 0} / ${data.max_pages || 0}`;
+          }
+          
+          syncStatus.textContent = `状态: ${data.status}`;
+          
+          // 显示同步模式（基于后端返回的is_resume和is_unlimited字段）
+          let modeText = data.is_resume ? '断点续跑' : '全新同步';
+          if (data.is_unlimited) {
+            modeText += ' (全量)';
+          }
+          syncMode.textContent = `模式: ${modeText}`;
+          
+          // 更新统计信息
+          if(currentSyncId){
+            updateSyncStats(currentSyncId);
+          }
+        }
+      
+      async function updateSyncStats(syncId){
+        try{
+          const res = await fetch(`/api/sync/stats/${syncId}`);
+          if(res.ok){
+            const data = await res.json();
+            statsNew.textContent = data.stats.new || 0;
+            statsUpdated.textContent = data.stats.updated || 0;
+            statsSkipped.textContent = data.stats.skipped || 0;
+            statsTotal.textContent = data.total_files || 0;
+          }
+        }catch(e){
+          console.log('获取统计信息失败:', e);
+        }
+      }
+
+        function resetSyncUI(){
+          currentSyncId = null;
+          syncProgress.classList.add('hidden');
+          btnSyncStart.classList.remove('hidden');
+          btnSyncPause.classList.add('hidden');
+          btnSyncResume.classList.add('hidden');
+          btnSyncCancel.classList.add('hidden');
+          syncProgressBar.style.width = '0%';
+          syncProgressText.textContent = '0%';
+          syncStats.textContent = '已处理: 0 / 总计: 0';
+          syncPages.textContent = '页数: 0 / 0';
+          syncStatus.textContent = '状态: 准备中';
+          syncMode.textContent = '模式: 全新同步';
+        }
+
+        function addSyncLog(message){
+          const timestamp = new Date().toLocaleTimeString();
+          const logEntry = document.createElement('div');
+          logEntry.textContent = `[${timestamp}] ${message}`;
+          syncLogs.appendChild(logEntry);
+          syncLogs.scrollTop = syncLogs.scrollHeight;
+        }
+
+        // 数据库统计功能
+        const btnRefreshDbStats = document.getElementById('btn-refresh-db-stats');
+        const dbTotalFiles = document.getElementById('db-total-files');
+        const dbImageFiles = document.getElementById('db-image-files');
+        const dbVideoFiles = document.getElementById('db-video-files');
+        const dbDocFiles = document.getElementById('db-doc-files');
+        const dbAudioFiles = document.getElementById('db-audio-files');
+        const dbOtherFiles = document.getElementById('db-other-files');
+
+        // 刷新数据库统计
+        btnRefreshDbStats?.addEventListener('click', async ()=>{
+          try{
+            btnRefreshDbStats.disabled = true;
+            btnRefreshDbStats.textContent = '刷新中...';
+            
+            const res = await fetch('/api/sync/db-stats');
+            const data = await res.json();
+            
+            if(res.ok){
+              updateDbStats(data.stats);
+              const totalFiles = Number(data.stats.file_records_total||0);
+              addSyncLog(`数据库统计已刷新: file_records_total=${totalFiles}`);
+            } else {
+              throw new Error(data.error || '获取统计失败');
+            }
+          }catch(e){
+            addSyncLog('刷新数据库统计失败: ' + (e.message||e));
+            Global.notify('刷新统计失败: ' + (e.message||e), 'error');
+          }finally{
+            btnRefreshDbStats.disabled = false;
+            btnRefreshDbStats.textContent = '刷新统计';
+          }
+        });
+
+        function updateDbStats(stats){
+          // 来自后端的 file_records 真实统计
+          const total = Number(stats.file_records_total || 0);
+          if(dbTotalFiles) dbTotalFiles.textContent = total;
+          if(dbImageFiles) dbImageFiles.textContent = Number(stats.file_images || 0);
+          if(dbVideoFiles) dbVideoFiles.textContent = Number(stats.file_videos || 0);
+          if(dbDocFiles) dbDocFiles.textContent = Number(stats.file_docs || 0);
+          if(dbAudioFiles) dbAudioFiles.textContent = Number(stats.file_audio || 0);
+          if(dbOtherFiles) dbOtherFiles.textContent = Number(stats.file_others || 0);
+        }
+
+        // 页面加载时自动刷新数据库统计
+        // 定期刷新同步状态
+        let syncStatusInterval = null;
+        
+        function startSyncStatusRefresh() {
+          if (syncStatusInterval) return;
+          syncStatusInterval = setInterval(async () => {
+            try {
+              const res = await fetch('/api/sync/status');
+              if (res.ok) {
+                const data = await res.json();
+                if (data.status === 'running') {
+                  addSyncLog(`同步进行中: ${data.message || '处理中...'}`);
+                } else if (data.status === 'completed') {
+                  addSyncLog(`同步完成: ${data.message || '任务完成'}`);
+                  stopSyncStatusRefresh();
+                } else if (data.status === 'error') {
+                  addSyncLog(`同步错误: ${data.message || '任务失败'}`);
+                  stopSyncStatusRefresh();
+                }
+              }
+            } catch (e) {
+              // 静默处理错误，避免日志刷屏
+            }
+          }, 5000); // 每5秒检查一次
+        }
+        
+        function stopSyncStatusRefresh() {
+          if (syncStatusInterval) {
+            clearInterval(syncStatusInterval);
+            syncStatusInterval = null;
+          }
+        }
+        
+        // 页面加载时启动同步状态刷新
+        startSyncStatusRefresh();
+        // 用户管理功能
+        const inpUserSearch = document.getElementById('inp-user-search');
+        const btnUserSearch = document.getElementById('btn-user-search');
+        const btnUserRefresh = document.getElementById('btn-user-refresh');
+        const userList = document.getElementById('user-list');
+        const userDetail = document.getElementById('user-detail');
+        const paymentAccounts = document.getElementById('payment-accounts');
+        const inpPaymentUserId = document.getElementById('inp-payment-user-id');
+        const selPaymentProvider = document.getElementById('sel-payment-provider');
+        const inpPaymentAccountNo = document.getElementById('inp-payment-account-no');
+        const inpPaymentAccountName = document.getElementById('inp-payment-account-name');
+        const btnPaymentBind = document.getElementById('btn-payment-bind');
+
+        let currentUserId = null;
+
+        // 加载用户列表
+        async function loadUserList(keyword = '') {
+          try {
+            const url = keyword ? `/api/users?keyword=${encodeURIComponent(keyword)}` : '/api/users';
+            const res = await fetch(url);
+            const data = await res.json();
+            
+            if (res.ok) {
+              displayUserList(data.users);
+              log(`用户列表已加载: 共 ${data.total} 个用户`);
+            } else {
+              Global.notify(`加载用户列表失败: ${data.message}`, 'error');
+            }
+          } catch (e) {
+            Global.notify(`加载用户列表失败: ${e.message}`, 'error');
+          }
+        }
+
+        // 显示用户列表
+        function displayUserList(users) {
+          if (!users || users.length === 0) {
+            userList.innerHTML = '<div class="text-sm text-gray-500 text-center py-4">暂无用户</div>';
+            return;
+          }
+
+          const table = `
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="px-3 py-2 text-left">用户ID</th>
+                  <th class="px-3 py-2 text-left">昵称</th>
+                  <th class="px-3 py-2 text-left">角色</th>
+                  <th class="px-3 py-2 text-left">注册时间</th>
+                  <th class="px-3 py-2 text-left">最近登录</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${users.map(user => `
+                  <tr class="border-t hover:bg-gray-50 cursor-pointer" data-user-id="${user.user_id}">
+                    <td class="px-3 py-2">${user.user_id}</td>
+                    <td class="px-3 py-2">${user.display_name || '-'}</td>
+                    <td class="px-3 py-2">
+                      <span class="px-2 py-1 rounded text-xs ${user.role === 'basic' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}">
+                        ${user.role}
+                      </span>
+                    </td>
+                    <td class="px-3 py-2">${user.registered_at ? new Date(user.registered_at * 1000).toLocaleString() : '-'}</td>
+                    <td class="px-3 py-2">${user.last_login_at ? new Date(user.last_login_at * 1000).toLocaleString() : '-'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `;
+          userList.innerHTML = table;
+
+          // 添加点击事件
+          userList.querySelectorAll('tr[data-user-id]').forEach(row => {
+            row.addEventListener('click', () => {
+              const userId = row.dataset.userId;
+              loadUserDetail(userId);
+            });
+          });
+        }
+
+        // 加载用户详情
+        async function loadUserDetail(userId) {
+          try {
+            const res = await fetch(`/api/users/${userId}`);
+            const data = await res.json();
+            
+            if (res.ok) {
+              currentUserId = userId;
+              displayUserDetail(data.user);
+              displayPaymentAccounts(data.payment_accounts);
+              inpPaymentUserId.value = userId;
+              log(`用户详情已加载: ${data.user.display_name || data.user.user_id}`);
+            } else {
+              Global.notify(`加载用户详情失败: ${data.message}`, 'error');
+            }
+          } catch (e) {
+            Global.notify(`加载用户详情失败: ${e.message}`, 'error');
+          }
+        }
+
+        // 显示用户详情
+        function displayUserDetail(user) {
+          const detail = `
+            <div class="space-y-3">
+              <div class="space-y-2">
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium">用户ID:</span>
+                  <span class="text-sm">${user.user_id}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium">昵称:</span>
+                  <span class="text-sm">${user.display_name || '-'}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium">注册时间:</span>
+                  <span class="text-sm">${user.registered_at ? new Date(user.registered_at * 1000).toLocaleString() : '-'}</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-sm font-medium">最近登录:</span>
+                  <span class="text-sm">${user.last_login_at ? new Date(user.last_login_at * 1000).toLocaleString() : '-'}</span>
+                </div>
+              </div>
+              
+              <!-- 角色管理 -->
+              <div class="border-t pt-3">
+                <div class="flex items-center justify-between mb-2">
+                  <span class="text-sm font-medium">角色管理:</span>
+                  <span class="px-2 py-1 rounded text-xs ${user.role === 'basic' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800'}">
+                    ${user.role}
+                  </span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <select id="sel-user-role" class="px-2 py-1 border rounded text-sm">
+                    <option value="basic" ${user.role === 'basic' ? 'selected' : ''}>基础用户</option>
+                    <option value="seller" ${user.role === 'seller' ? 'selected' : ''}>卖家</option>
+                    <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>管理员</option>
+                  </select>
+                  <button id="btn-update-role" class="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">
+                    更新角色
+                  </button>
+                </div>
+              </div>
+            </div>
+          `;
+          userDetail.innerHTML = detail;
+          
+          // 添加角色更新事件
+          const btnUpdateRole = document.getElementById('btn-update-role');
+          const selUserRole = document.getElementById('sel-user-role');
+          
+          if (btnUpdateRole && selUserRole) {
+            btnUpdateRole.addEventListener('click', () => {
+              updateUserRole(user.user_id, selUserRole.value);
+            });
+          }
+        }
+
+        // 显示支付账户列表
+        function displayPaymentAccounts(accounts) {
+          if (!accounts || accounts.length === 0) {
+            paymentAccounts.innerHTML = '<div class="text-sm text-gray-500 text-center py-4">暂无支付账户</div>';
+            return;
+          }
+
+          const table = `
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="px-3 py-2 text-left">渠道</th>
+                  <th class="px-3 py-2 text-left">账户号码</th>
+                  <th class="px-3 py-2 text-left">账户名称</th>
+                  <th class="px-3 py-2 text-left">状态</th>
+                  <th class="px-3 py-2 text-left">验证时间</th>
+                  <th class="px-3 py-2 text-left">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${accounts.map(account => `
+                  <tr class="border-t">
+                    <td class="px-3 py-2">${account.provider}</td>
+                    <td class="px-3 py-2">${account.account_no}</td>
+                    <td class="px-3 py-2">${account.account_name || '-'}</td>
+                    <td class="px-3 py-2">
+                      <span class="px-2 py-1 rounded text-xs ${getStatusClass(account.status)}">
+                        ${account.status}
+                      </span>
+                    </td>
+                    <td class="px-3 py-2">${account.verified_at ? new Date(account.verified_at * 1000).toLocaleString() : '-'}</td>
+                    <td class="px-3 py-2">
+                      <div class="flex items-center gap-1">
+                        ${getActionButtons(account)}
+                      </div>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `;
+          paymentAccounts.innerHTML = table;
+
+          // 添加事件监听器
+          addPaymentAccountEventListeners();
+        }
+
+        // 获取状态样式类
+        function getStatusClass(status) {
+          switch (status) {
+            case 'pending': return 'bg-yellow-100 text-yellow-800';
+            case 'verified': return 'bg-green-100 text-green-800';
+            case 'rejected': return 'bg-red-100 text-red-800';
+            case 'disabled': return 'bg-gray-100 text-gray-800';
+            case 'deleted': return 'bg-gray-100 text-gray-600';
+            default: return 'bg-gray-100 text-gray-800';
+          }
+        }
+
+        // 获取操作按钮
+        function getActionButtons(account) {
+          const buttons = [];
+          
+          if (account.status === 'pending') {
+            buttons.push(`
+              <button class="btn-verify px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700" 
+                      data-account-id="${account.id}" data-action="verify">
+                审核通过
+              </button>
+            `);
+            buttons.push(`
+              <button class="btn-reject px-2 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-700" 
+                      data-account-id="${account.id}" data-action="reject">
+                拒绝
+              </button>
+            `);
+          }
+          
+          if (account.status === 'verified' || account.status === 'rejected') {
+            buttons.push(`
+              <button class="btn-disable px-2 py-1 bg-orange-600 text-white text-xs rounded hover:bg-orange-700" 
+                      data-account-id="${account.id}" data-action="disable">
+                禁用
+              </button>
+            `);
+          }
+          
+          if (account.status !== 'deleted') {
+            buttons.push(`
+              <button class="btn-delete px-2 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700" 
+                      data-account-id="${account.id}" data-action="delete">
+                删除
+              </button>
+            `);
+          }
+          
+          return buttons.join('');
+        }
+
+        // 添加支付账户操作事件监听器
+        function addPaymentAccountEventListeners() {
+          // 审核通过
+          paymentAccounts.querySelectorAll('.btn-verify').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              const accountId = e.target.dataset.accountId;
+              verifyPaymentAccount(accountId, 'verified');
+            });
+          });
+
+          // 拒绝
+          paymentAccounts.querySelectorAll('.btn-reject').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              const accountId = e.target.dataset.accountId;
+              const remark = prompt('请输入拒绝原因（可选）:');
+              verifyPaymentAccount(accountId, 'rejected', remark);
+            });
+          });
+
+          // 禁用
+          paymentAccounts.querySelectorAll('.btn-disable').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              const accountId = e.target.dataset.accountId;
+              const reason = prompt('请输入禁用原因（可选）:');
+              disablePaymentAccount(accountId, reason);
+            });
+          });
+
+          // 删除
+          paymentAccounts.querySelectorAll('.btn-delete').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              const accountId = e.target.dataset.accountId;
+              if (confirm('确定要删除这个支付账户吗？此操作不可恢复。')) {
+                deletePaymentAccount(accountId);
+              }
+            });
+          });
+        }
+
+        // 审核支付账户
+        async function verifyPaymentAccount(accountId, status, remark = '') {
+          try {
+            const res = await fetch('/api/payment/verify', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                account_id: accountId,
+                status: status,
+                remark: remark
+              })
+            });
+
+            const data = await res.json();
+
+            if (res.ok) {
+              Global.notify(`支付账户${status === 'verified' ? '审核通过' : '已拒绝'}`, 'success');
+              // 重新加载用户详情
+              if (currentUserId) {
+                loadUserDetail(currentUserId);
+              }
+            } else {
+              Global.notify(`操作失败: ${data.message}`, 'error');
+            }
+          } catch (e) {
+            Global.notify(`操作失败: ${e.message}`, 'error');
+          }
+        }
+
+        // 禁用支付账户
+        async function disablePaymentAccount(accountId, reason = '') {
+          try {
+            const res = await fetch('/api/payment/disable', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                account_id: accountId,
+                reason: reason
+              })
+            });
+
+            const data = await res.json();
+
+            if (res.ok) {
+              Global.notify('支付账户已禁用', 'success');
+              // 重新加载用户详情
+              if (currentUserId) {
+                loadUserDetail(currentUserId);
+              }
+            } else {
+              Global.notify(`操作失败: ${data.message}`, 'error');
+            }
+          } catch (e) {
+            Global.notify(`操作失败: ${e.message}`, 'error');
+          }
+        }
+
+        // 删除支付账户
+        async function deletePaymentAccount(accountId) {
+          try {
+            const res = await fetch(`/api/payment/${accountId}`, {
+              method: 'DELETE'
+            });
+
+            const data = await res.json();
+
+            if (res.ok) {
+              Global.notify('支付账户已删除', 'success');
+              // 重新加载用户详情
+              if (currentUserId) {
+                loadUserDetail(currentUserId);
+              }
+            } else {
+              Global.notify(`操作失败: ${data.message}`, 'error');
+            }
+          } catch (e) {
+            Global.notify(`操作失败: ${e.message}`, 'error');
+          }
+        }
+
+        // 更新用户角色
+        async function updateUserRole(userId, newRole) {
+          try {
+            const res = await fetch(`/api/users/${userId}/role`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ role: newRole })
+            });
+            
+            const data = await res.json();
+            
+            if (res.ok) {
+              Global.notify(`用户角色已更新为: ${newRole}`, 'success');
+              // 重新加载用户详情
+              loadUserDetail(userId);
+              // 重新加载用户列表
+              loadUserList();
+            } else {
+              Global.notify(`更新角色失败: ${data.message}`, 'error');
+            }
+          } catch (e) {
+            Global.notify(`更新角色失败: ${e.message}`, 'error');
+          }
+        }
+
+        // 绑定支付账户
+        async function bindPaymentAccount() {
+          const userId = inpPaymentUserId.value.trim();
+          const provider = selPaymentProvider.value;
+          const accountNo = inpPaymentAccountNo.value.trim();
+          const accountName = inpPaymentAccountName.value.trim();
+
+          if (!provider || !accountNo) {
+            Global.notify('请填写支付渠道和账户号码', 'warn');
+            return;
+          }
+
+          try {
+            btnPaymentBind.disabled = true;
+            btnPaymentBind.textContent = '绑定中...';
+
+            const res = await fetch('/api/payment/bind', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                provider: provider,
+                account_no: accountNo,
+                account_name: accountName
+              })
+            });
+
+            const data = await res.json();
+
+            if (res.ok) {
+              Global.notify('支付账户绑定成功', 'success');
+              // 清空表单
+              inpPaymentAccountNo.value = '';
+              inpPaymentAccountName.value = '';
+              // 重新加载用户详情
+              if (currentUserId) {
+                loadUserDetail(currentUserId);
+              }
+            } else {
+              Global.notify(`绑定失败: ${data.message}`, 'error');
+            }
+          } catch (e) {
+            Global.notify(`绑定失败: ${e.message}`, 'error');
+          } finally {
+            btnPaymentBind.disabled = false;
+            btnPaymentBind.textContent = '绑定支付账户';
+          }
+        }
+
+        // 事件监听器
+        btnUserSearch?.addEventListener('click', () => {
+          const keyword = inpUserSearch.value.trim();
+          loadUserList(keyword);
+        });
+
+        btnUserRefresh?.addEventListener('click', () => {
+          loadUserList();
+        });
+
+        btnPaymentBind?.addEventListener('click', bindPaymentAccount);
+
+        // 搜索框回车事件
+        inpUserSearch?.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') {
+            btnUserSearch?.click();
+          }
+        });
+
+        // 上架审核功能
+        const selReviewStatus = document.getElementById('sel-review-status');
+        const btnListingsRefresh = document.getElementById('btn-listings-refresh');
+        const listingsReviewList = document.getElementById('listings-review-list');
+        const listingDetail = document.getElementById('listing-detail');
+        const reviewActions = document.getElementById('review-actions');
+        const inpReviewRemark = document.getElementById('inp-review-remark');
+        const inpReviewerId = document.getElementById('inp-reviewer-id');
+        const btnReviewApprove = document.getElementById('btn-review-approve');
+        const btnReviewReject = document.getElementById('btn-review-reject');
+
+        let currentListingId = null;
+
+        // 加载审核队列
+        async function loadReviewListings(status = 'pending') {
+          try {
+            const res = await fetch(`/api/listings/review?status=${status}&limit=50`);
+            const data = await res.json();
+            
+            if (res.ok) {
+              displayReviewListings(data.listings);
+              log(`审核队列已加载: 共 ${data.total} 个商品`);
+            } else {
+              Global.notify(`加载审核队列失败: ${data.message}`, 'error');
+            }
+          } catch (error) {
+            Global.notify(`加载审核队列失败: ${error.message}`, 'error');
+          }
+        }
+
+        // 显示审核队列
+        function displayReviewListings(listings) {
+          if (!listings || listings.length === 0) {
+            listingsReviewList.innerHTML = '<div class="text-sm text-gray-500 text-center py-4">暂无待审核商品</div>';
+            return;
+          }
+
+          const html = `
+            <div class="divide-y">
+              ${listings.map(listing => `
+                <div class="p-3 hover:bg-gray-50 cursor-pointer" onclick="selectListing(${listing.id})">
+                  <div class="flex items-center justify-between">
+                    <div class="flex-1">
+                      <div class="font-medium text-sm">${listing.title}</div>
+                      <div class="text-xs text-gray-500 mt-1">
+                        卖家: ${listing.seller.display_name || listing.seller.user_id} | 
+                        价格: ¥${(listing.price_cents / 100).toFixed(2)} | 
+                        类型: ${listing.listing_type} | 
+                        提交时间: ${new Date(listing.created_at * 1000).toLocaleString()}
+                      </div>
+                      ${listing.last_review ? `
+                        <div class="text-xs text-gray-400 mt-1">
+                          最近审核: ${listing.last_review.status} - ${listing.last_review.remark || '无备注'}
+                        </div>
+                      ` : ''}
+                    </div>
+                    <div class="text-xs text-gray-400">
+                      ID: ${listing.id}
+                    </div>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `;
+          listingsReviewList.innerHTML = html;
+        }
+
+        // 选择商品
+        async function selectListing(listingId) {
+          currentListingId = listingId;
+          try {
+            const res = await fetch(`/api/listings/${listingId}`);
+            const data = await res.json();
+            
+            if (res.ok) {
+              displayListingDetail(data.listing);
+              reviewActions.classList.remove('hidden');
+            } else {
+              Global.notify(`加载商品详情失败: ${data.message}`, 'error');
+            }
+          } catch (error) {
+            Global.notify(`加载商品详情失败: ${error.message}`, 'error');
+          }
+        }
+
+        // 显示商品详情
+        function displayListingDetail(listing) {
+          const html = `
+            <div class="space-y-3">
+              <div>
+                <div class="font-medium text-sm">${listing.title}</div>
+                <div class="text-xs text-gray-500 mt-1">ID: ${listing.id}</div>
+              </div>
+              
+              <div>
+                <div class="text-xs text-gray-600 mb-1">商品描述</div>
+                <div class="text-sm">${listing.description || '无描述'}</div>
+              </div>
+              
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <div class="text-xs text-gray-600 mb-1">价格</div>
+                  <div class="text-sm font-medium">¥${(listing.price_cents / 100).toFixed(2)}</div>
+                </div>
+                <div>
+                  <div class="text-xs text-gray-600 mb-1">类型</div>
+                  <div class="text-sm">${listing.listing_type}</div>
+                </div>
+              </div>
+              
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <div class="text-xs text-gray-600 mb-1">状态</div>
+                  <div class="text-sm">${listing.status}</div>
+                </div>
+                <div>
+                  <div class="text-xs text-gray-600 mb-1">审核状态</div>
+                  <div class="text-sm">${listing.review_status}</div>
+                </div>
+              </div>
+              
+              <div>
+                <div class="text-xs text-gray-600 mb-1">卖家信息</div>
+                <div class="text-sm">${listing.seller.display_name || listing.seller.user_id} (${listing.seller.user_id})</div>
+              </div>
+              
+              <div>
+                <div class="text-xs text-gray-600 mb-1">关联文件 (${listing.files.length}个)</div>
+                <div class="space-y-1">
+                  ${listing.files.map(file => `
+                    <div class="text-xs bg-gray-100 p-2 rounded">
+                      <div class="font-medium">${file.file_name}</div>
+                      <div class="text-gray-500">${file.file_path}</div>
+                      <div class="text-gray-400">${file.file_size ? (file.file_size / 1024 / 1024).toFixed(2) + 'MB' : '未知大小'}</div>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+              
+              ${listing.last_review ? `
+                <div>
+                  <div class="text-xs text-gray-600 mb-1">最近审核记录</div>
+                  <div class="text-xs bg-yellow-50 p-2 rounded">
+                    <div>状态: ${listing.last_review.status}</div>
+                    <div>审核员: ${listing.last_review.reviewer_id}</div>
+                    <div>时间: ${new Date(listing.last_review.reviewed_at * 1000).toLocaleString()}</div>
+                    <div>备注: ${listing.last_review.remark || '无备注'}</div>
+                  </div>
+                </div>
+              ` : ''}
+            </div>
+          `;
+          listingDetail.innerHTML = html;
+        }
+
+        // 审核操作
+        async function submitReview(status) {
+          if (!currentListingId) {
+            Global.notify('请先选择要审核的商品', 'error');
+            return;
+          }
+
+          const remark = inpReviewRemark.value.trim();
+          const reviewerId = inpReviewerId.value.trim();
+
+          if (!reviewerId) {
+            Global.notify('请输入审核员ID', 'error');
+            return;
+          }
+
+          try {
+            const res = await fetch(`/api/listings/${currentListingId}/review`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                status: status,
+                remark: remark,
+                reviewer_id: reviewerId
+              })
+            });
+            
+            const data = await res.json();
+            
+            if (res.ok) {
+              Global.notify(`商品审核${status === 'approved' ? '通过' : '驳回'}成功`, 'success');
+              inpReviewRemark.value = '';
+              reviewActions.classList.add('hidden');
+              loadReviewListings(selReviewStatus.value);
+            } else {
+              Global.notify(`审核失败: ${data.message}`, 'error');
+            }
+          } catch (error) {
+            Global.notify(`审核失败: ${error.message}`, 'error');
+          }
+        }
+
+        // 事件监听
+        btnListingsRefresh?.addEventListener('click', () => {
+          loadReviewListings(selReviewStatus.value);
+        });
+
+        selReviewStatus?.addEventListener('change', () => {
+          loadReviewListings(selReviewStatus.value);
+        });
+
+        btnReviewApprove?.addEventListener('click', () => {
+          submitReview('approved');
+        });
+
+        btnReviewReject?.addEventListener('click', () => {
+          submitReview('rejected');
+        });
+
+        // 支付配置功能
+        const btnSettingsNotify = document.getElementById('btn-settings-notify');
+        const btnSettingsPayment = document.getElementById('btn-settings-payment');
+        const settingsNotify = document.getElementById('settings-notify');
+        const settingsPayment = document.getElementById('settings-payment');
+        const btnPaymentConfigRefresh = document.getElementById('btn-payment-config-refresh');
+        const paymentConfigList = document.getElementById('payment-config-list');
+        const selPaymentConfigProvider = document.getElementById('sel-payment-config-provider');
+        const selPaymentConfigStatus = document.getElementById('sel-payment-config-status');
+        const inpPaymentConfigPublicKey = document.getElementById('inp-payment-config-public-key');
+        const inpPaymentConfigPrivateKey = document.getElementById('inp-payment-config-private-key');
+        const btnPaymentConfigSave = document.getElementById('btn-payment-config-save');
+        const btnPaymentConfigTest = document.getElementById('btn-payment-config-test');
+        const btnPaymentConfigClear = document.getElementById('btn-payment-config-clear');
+
+        // 系统设置标签切换
+        btnSettingsNotify?.addEventListener('click', () => {
+          btnSettingsNotify.classList.add('bg-gray-100');
+          btnSettingsPayment.classList.remove('bg-gray-100');
+          settingsNotify.classList.remove('hidden');
+          settingsPayment.classList.add('hidden');
+        });
+
+        btnSettingsPayment?.addEventListener('click', () => {
+          btnSettingsPayment.classList.add('bg-gray-100');
+          btnSettingsNotify.classList.remove('bg-gray-100');
+          settingsPayment.classList.remove('hidden');
+          settingsNotify.classList.add('hidden');
+          loadPaymentConfigs();
+        });
+
+        // 加载支付配置列表
+        async function loadPaymentConfigs() {
+          try {
+            const res = await fetch('/api/payment/config');
+            const data = await res.json();
+            
+            if (res.ok) {
+              displayPaymentConfigs(data.configs);
+              log(`支付配置列表已加载: 共 ${data.configs.length} 个配置`);
+            } else {
+              Global.notify(`加载支付配置失败: ${data.message}`, 'error');
+            }
+          } catch (e) {
+            Global.notify(`加载支付配置失败: ${e.message}`, 'error');
+          }
+        }
+
+        // 显示支付配置列表
+        function displayPaymentConfigs(configs) {
+          if (!configs || configs.length === 0) {
+            paymentConfigList.innerHTML = '<div class="text-sm text-gray-500 text-center py-4">暂无支付配置</div>';
+            return;
+          }
+
+          const table = `
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="px-3 py-2 text-left">支付渠道</th>
+                  <th class="px-3 py-2 text-left">状态</th>
+                  <th class="px-3 py-2 text-left">创建时间</th>
+                  <th class="px-3 py-2 text-left">更新时间</th>
+                  <th class="px-3 py-2 text-left">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${configs.map(config => `
+                  <tr class="border-t">
+                    <td class="px-3 py-2">${config.provider}</td>
+                    <td class="px-3 py-2">
+                      <span class="px-2 py-1 rounded text-xs ${config.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}">
+                        ${config.status}
+                      </span>
+                    </td>
+                    <td class="px-3 py-2">${new Date(config.created_at * 1000).toLocaleString()}</td>
+                    <td class="px-3 py-2">${new Date(config.updated_at * 1000).toLocaleString()}</td>
+                    <td class="px-3 py-2">
+                      <button class="btn-edit-config px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700" 
+                              data-provider="${config.provider}">
+                        编辑
+                      </button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          `;
+          paymentConfigList.innerHTML = table;
+
+          // 添加编辑事件监听器
+          paymentConfigList.querySelectorAll('.btn-edit-config').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+              const provider = e.target.dataset.provider;
+              editPaymentConfig(provider);
+            });
+          });
+        }
+
+        // 编辑支付配置
+        function editPaymentConfig(provider) {
+          selPaymentConfigProvider.value = provider;
+          // 这里可以添加加载现有配置的逻辑
+          Global.notify(`准备编辑 ${provider} 配置`, 'info');
+        }
+
+        // 保存支付配置
+        async function savePaymentConfig() {
+          const provider = selPaymentConfigProvider.value;
+          const publicKey = inpPaymentConfigPublicKey.value.trim();
+          const privateKey = inpPaymentConfigPrivateKey.value.trim();
+
+          if (!provider || !publicKey || !privateKey) {
+            Global.notify('请填写支付渠道、公钥和私钥', 'warn');
+            return;
+          }
+
+          try {
+            btnPaymentConfigSave.disabled = true;
+            btnPaymentConfigSave.textContent = '保存中...';
+
+            const res = await fetch('/api/payment/config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                provider: provider,
+                public_key: publicKey,
+                private_key: privateKey
+              })
+            });
+
+            const data = await res.json();
+
+            if (res.ok) {
+              Global.notify('支付配置保存成功', 'success');
+              loadPaymentConfigs();
+            } else {
+              Global.notify(`保存失败: ${data.message}`, 'error');
+            }
+          } catch (e) {
+            Global.notify(`保存失败: ${e.message}`, 'error');
+          } finally {
+            btnPaymentConfigSave.disabled = false;
+            btnPaymentConfigSave.textContent = '保存配置';
+          }
+        }
+
+        // 测试支付配置
+        async function testPaymentConfig() {
+          const provider = selPaymentConfigProvider.value;
+
+          if (!provider) {
+            Global.notify('请选择支付渠道', 'warn');
+            return;
+          }
+
+          try {
+            btnPaymentConfigTest.disabled = true;
+            btnPaymentConfigTest.textContent = '测试中...';
+
+            const res = await fetch(`/api/payment/config/${provider}/test`, {
+              method: 'POST'
+            });
+
+            const data = await res.json();
+
+            if (res.ok) {
+              Global.notify(`支付配置测试成功: ${data.message}`, 'success');
+            } else {
+              Global.notify(`测试失败: ${data.message}`, 'error');
+            }
+          } catch (e) {
+            Global.notify(`测试失败: ${e.message}`, 'error');
+          } finally {
+            btnPaymentConfigTest.disabled = false;
+            btnPaymentConfigTest.textContent = '测试配置';
+          }
+        }
+
+        // 清空表单
+        function clearPaymentConfigForm() {
+          selPaymentConfigProvider.value = 'alipay';
+          selPaymentConfigStatus.value = 'active';
+          inpPaymentConfigPublicKey.value = '';
+          inpPaymentConfigPrivateKey.value = '';
+        }
+
+        // 支付配置事件监听器
+        btnPaymentConfigRefresh?.addEventListener('click', loadPaymentConfigs);
+        btnPaymentConfigSave?.addEventListener('click', savePaymentConfig);
+        btnPaymentConfigTest?.addEventListener('click', testPaymentConfig);
+        btnPaymentConfigClear?.addEventListener('click', clearPaymentConfigForm);
+
+        document.addEventListener('DOMContentLoaded', ()=>{
+          if(document.getElementById('sec-sync')){
+            setTimeout(()=>{
+              btnRefreshDbStats?.click();
+            }, 1000);
+          }
+        });
+
+      btnShareCreate?.addEventListener('click', async ()=>{
+        try{
+          const fsidsText = (inpShareFsids.value||'').trim();
+          const fsids = fsidsText ? fsidsText.split(',').map(s=>Number(s.trim())).filter(Boolean) : [];
+          const period = Number(inpSharePeriod.value||'')||undefined;
+          const remark = (inpShareRemark.value||'').trim();
+          if(!fsids.length){ Global.notify('请输入 fsids', 'warn'); return; }
+          const res = await Global.api.shareCreate({ fsids, period, remark });
+          shareOut.textContent = JSON.stringify(res, null, 2);
+          Global.notify('已创建分享', 'success');
+        }catch(e){ shareOut.textContent = String(e); Global.notify('创建分享失败: ' + (e.message||e), 'error'); }
+      });
+      btnShareQuery?.addEventListener('click', async ()=>{
+        try{
+          const shareId = (inpShareId.value||'').trim();
+          if(!shareId){ Global.notify('请输入 share_id', 'warn'); return; }
+          const res = await Global.api.shareInfo({ share_id: shareId });
+          shareOut.textContent = JSON.stringify(res, null, 2);
+          Global.notify('已查询分享', 'success');
+        }catch(e){ shareOut.textContent = String(e); Global.notify('查询失败: ' + (e.message||e), 'error'); }
+      });
+      btnShareTransfer?.addEventListener('click', async ()=>{
+        try{
+          const shareId = (inpShareId.value||'').trim();
+          const pwd = (inpSharePwd.value||'').trim();
+          const dest = (inpShareDest.value||'/').trim()||'/';
+          if(!shareId || !pwd){ Global.notify('请输入 share_id 与 pwd', 'warn'); return; }
+          const res = await Global.api.shareTransfer({ share_id: shareId, pwd, fsids: [], dest_path: dest });
+          shareOut.textContent = JSON.stringify(res, null, 2);
+          Global.notify('已请求转存', 'success');
+        }catch(e){ shareOut.textContent = String(e); Global.notify('转存失败: ' + (e.message||e), 'error'); }
+      });
+      btnShareDlink?.addEventListener('click', async ()=>{
+        try{
+          const shareId = (inpShareId.value||'').trim();
+          const pwd = (inpSharePwd.value||'').trim();
+          const fsidOne = Number((inpShareFsidOne.value||'').trim());
+          if(!shareId || !pwd || !fsidOne){ Global.notify('请输入 share_id、pwd、fsid', 'warn'); return; }
+          const res = await Global.api.shareDlink({ share_id: shareId, pwd, fsid: fsidOne });
+          shareOut.textContent = JSON.stringify(res, null, 2);
+          Global.notify('已获取下载地址', 'success');
+        }catch(e){ shareOut.textContent = String(e); Global.notify('获取失败: ' + (e.message||e), 'error'); }
+      });
+
+      // ===== 系统设置：通知发送 =====
+      function renderScheduled(){
+        if(!notifyScheduleBody) return;
+        const rows = [];
+        scheduled.ones.forEach(item=>{
+          const when = item.nextAt ? formatRetryTime(item.nextAt) : '';
+          rows.push(`<tr class="border-t">
+            <td class="px-3 py-2 text-gray-500">${item.id}</td>
+            <td class="px-3 py-2">一次</td>
+            <td class="px-3 py-2 mono" title="${escapeHtml(item.text)}">${escapeHtml(truncate(item.text, 40))}</td>
+            <td class="px-3 py-2">待触发</td>
+            <td class="px-3 py-2 text-gray-500">${escapeHtml(when)}</td>
+            <td class="px-3 py-2"><button data-id="${item.id}" class="btn-cancel-once px-2 py-1 border rounded text-sm">取消</button></td>
+          </tr>`);
+        });
+        if(scheduled.loopId){
+          rows.push(`<tr class="border-t">
+            <td class="px-3 py-2 text-gray-500">${escapeHtml(scheduled.loopNid||'LOOP')}</td>
+            <td class="px-3 py-2">循环</td>
+            <td class="px-3 py-2 mono" title="${escapeHtml(scheduled.loopText||'')}">${escapeHtml(truncate(scheduled.loopText||'', 40))}</td>
+            <td class="px-3 py-2">运行中</td>
+            <td class="px-3 py-2 text-gray-500">${escapeHtml(formatRetryTime(scheduled.loopNextAt||0))}</td>
+            <td class="px-3 py-2"><button id="btn-cancel-loop" class="px-2 py-1 border rounded text-sm">停止</button></td>
+          </tr>`);
+        }
+        notifyScheduleBody.innerHTML = rows.join('');
+        notifyScheduleBody.querySelectorAll('.btn-cancel-once').forEach(btn=>{
+          btn.addEventListener('click', ()=>{
+            const id = btn.getAttribute('data-id');
+            const idx = scheduled.ones.findIndex(x=> String(x.id)===String(id));
+            if(idx>=0){ clearTimeout(scheduled.ones[idx].timer); scheduled.ones.splice(idx,1); renderScheduled(); log('已取消一次性通知计划'); }
+          });
+        });
+        const stopBtn = document.getElementById('btn-cancel-loop');
+        stopBtn?.addEventListener('click', ()=>{ stopLoopNotify(); });
+      }
+      function sendNotifyNow(text, type){ Global.notify(text||'测试通知', type||'info'); log('手动发送通知: ' + (text||'')); }
+      function scheduleOnce(text, type, delaySec){
+        const id = 'N-' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+        const nextAt = Math.floor(Date.now()/1000) + Math.max(0, Number(delaySec||0));
+        const msg = `[${id}] ${text}`;
+        const timer = setTimeout(()=>{ Global.notify(msg, type); log(`#${id} 触发一次性通知: ${text}`); const i = scheduled.ones.findIndex(x=>x.id===id); if(i>=0){ scheduled.ones.splice(i,1); renderScheduled(); } }, Math.max(0, Number(delaySec||0))*1000);
+        scheduled.ones.push({ id, text, type, nextAt, timer });
+        renderScheduled();
+      }
+      function startLoopNotify(text, type, intervalSec){
+        stopLoopNotify();
+        const iv = Math.max(1, Number(intervalSec||0));
+        const nid = 'N-' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+        scheduled.loopNid = nid;
+        scheduled.loopText = text; scheduled.loopType = type;
+        scheduled.loopNextAt = Math.floor(Date.now()/1000) + iv;
+        scheduled.loopId = setInterval(()=>{
+          Global.notify(`[${nid}] ${text}`, type);
+          log(`#${nid} 触发循环通知: ` + text);
+          scheduled.loopNextAt = Math.floor(Date.now()/1000) + iv;
+          renderScheduled();
+        }, iv*1000);
+        renderScheduled();
+      }
+      function stopLoopNotify(){ if(scheduled.loopId){ clearInterval(scheduled.loopId); scheduled.loopId = null; renderScheduled(); log('已停止循环通知'); } }
+
+      btnNotifyNow?.addEventListener('click', ()=>{ const id='N-' + Date.now().toString(36) + Math.random().toString(36).slice(2,6); const t=(inpNotifyText.value||'').trim(); const ty=selNotifyType.value||'info'; Global.notify(`[${id}] ${t||'测试通知'}`, ty); log(`#${id} 手动发送通知: ${t}`); });
+      // 同步发布到后端，其他页面可见
+      btnNotifyNow?.addEventListener('click', async ()=>{ try{ const t=(inpNotifyText.value||'').trim(); const ty=selNotifyType.value||'info'; if(t){ await Global.api.notifyPublish({ text: t, type: ty, sender_role: '管理员' }); } }catch(_){} });
+      btnNotifySchedule?.addEventListener('click', ()=>{ const t=(inpNotifyText.value||'').trim(); const ty=selNotifyType.value||'info'; const d=Number(inpNotifyDelay.value||0); if(!t){ Global.notify('请输入通知内容','warn'); return;} scheduleOnce(t, ty, d); });
+      btnNotifySchedule?.addEventListener('click', async ()=>{ try{ const t=(inpNotifyText.value||'').trim(); const ty=selNotifyType.value||'info'; const d=Number(inpNotifyDelay.value||0); if(t && d>=0){ setTimeout(()=>{ Global.api.notifyPublish({ text: t, type: ty, sender_role: '管理员' }).catch(()=>{}); }, Math.max(0,d)*1000); } }catch(_){} });
+      btnNotifyStart?.addEventListener('click', ()=>{ const t=(inpNotifyText.value||'').trim(); const ty=selNotifyType.value||'info'; const iv=Number(inpNotifyInterval.value||0); if(!t||!iv){ Global.notify('请输入内容与间隔','warn'); return;} startLoopNotify(t, ty, iv); });
+      btnNotifyStart?.addEventListener('click', ()=>{ const t=(inpNotifyText.value||'').trim(); const ty=selNotifyType.value||'info'; const iv=Number(inpNotifyInterval.value||0); if(t && iv>0){ setInterval(()=>{ Global.api.notifyPublish({ text: t, type: ty, sender_role: '管理员' }).catch(()=>{}); }, iv*1000); } });
+      btnNotifyStop?.addEventListener('click', ()=>{ stopLoopNotify(); });
+
+      // ===== 提现审核功能 =====
+      let currentPayoutId = null;
+      
+      // 刷新提现申请列表
+      async function loadPayouts() {
+        try {
+          const status = document.getElementById('sel-payout-status')?.value || 'pending';
+          const response = await fetch(`/api/payouts?status=${status}&limit=50`);
+          const data = await response.json();
+          
+          const container = document.getElementById('payouts-list');
+          if (!container) return;
+          
+          if (data.status === 'success' && data.payouts.length > 0) {
+            const rows = data.payouts.map(payout => `
+              <div class="border-b p-3 hover:bg-gray-50 cursor-pointer payout-item" data-id="${payout.id}">
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="font-medium">${payout.user_name || payout.user_id}</div>
+                    <div class="text-sm text-gray-600">申请金额: ¥${payout.amount_yuan.toFixed(2)}</div>
+                    <div class="text-xs text-gray-500">${payout.method} - ${payout.account_info}</div>
+                  </div>
+                  <div class="text-right">
+                    <div class="text-sm font-medium ${getStatusColor(payout.status)}">${getStatusText(payout.status)}</div>
+                    <div class="text-xs text-gray-500">${formatTime(payout.created_at)}</div>
+                  </div>
+                </div>
+              </div>
+            `).join('');
+            
+            container.innerHTML = rows;
+            
+            // 添加点击事件
+            container.querySelectorAll('.payout-item').forEach(item => {
+              item.addEventListener('click', () => {
+                const payoutId = item.getAttribute('data-id');
+                loadPayoutDetail(payoutId);
+              });
+            });
+          } else {
+            container.innerHTML = '<div class="text-sm text-gray-500 text-center py-4">暂无提现申请</div>';
+          }
+        } catch (error) {
+          Global.notify('加载提现申请失败: ' + error.message, 'error');
+        }
+      }
+      
+      // 加载提现详情
+      async function loadPayoutDetail(payoutId) {
+        try {
+          currentPayoutId = payoutId;
+          
+          const response = await fetch(`/api/payouts?status=all&limit=100`);
+          const data = await response.json();
+          
+          if (data.status === 'success') {
+            const payout = data.payouts.find(p => p.id == payoutId);
+            if (payout) {
+              const detailContainer = document.getElementById('payout-detail');
+              const actionsContainer = document.getElementById('payout-actions');
+              
+              if (detailContainer) {
+                detailContainer.innerHTML = `
+                  <div class="space-y-2">
+                    <div><strong>申请ID:</strong> ${payout.id}</div>
+                    <div><strong>用户:</strong> ${payout.user_name || payout.user_id}</div>
+                    <div><strong>金额:</strong> ¥${payout.amount_yuan.toFixed(2)}</div>
+                    <div><strong>方式:</strong> ${payout.method}</div>
+                    <div><strong>账户:</strong> ${payout.account_info}</div>
+                    <div><strong>状态:</strong> <span class="${getStatusColor(payout.status)}">${getStatusText(payout.status)}</span></div>
+                    <div><strong>申请时间:</strong> ${formatTime(payout.created_at)}</div>
+                    ${payout.processed_at ? `<div><strong>处理时间:</strong> ${formatTime(payout.processed_at)}</div>` : ''}
+                    ${payout.remark ? `<div><strong>备注:</strong> ${payout.remark}</div>` : ''}
+                  </div>
+                `;
+              }
+              
+              if (actionsContainer) {
+                if (payout.status === 'pending') {
+                  actionsContainer.classList.remove('hidden');
+                } else {
+                  actionsContainer.classList.add('hidden');
+                }
+              }
+            }
+          }
+        } catch (error) {
+          Global.notify('加载提现详情失败: ' + error.message, 'error');
+        }
+      }
+      
+      // 审核提现申请
+      async function reviewPayout(status) {
+        if (!currentPayoutId) {
+          Global.notify('请先选择提现申请', 'warn');
+          return;
+        }
+        
+        const remark = document.getElementById('inp-payout-remark')?.value || '';
+        const reviewerId = document.getElementById('inp-payout-reviewer-id')?.value || '';
+        
+        if (!reviewerId) {
+          Global.notify('请输入审核员ID', 'warn');
+          return;
+        }
+        
+        try {
+          const response = await fetch(`/api/payouts/${currentPayoutId}/review`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              status: status,
+              reviewer_id: reviewerId,
+              remark: remark
+            })
+          });
+          
+          const data = await response.json();
+          
+          if (data.status === 'success') {
+            Global.notify(`提现申请${status}成功`, 'success');
+            loadPayouts(); // 刷新列表
+            loadPayoutDetail(currentPayoutId); // 刷新详情
+          } else {
+            Global.notify('审核失败: ' + data.message, 'error');
+          }
+        } catch (error) {
+          Global.notify('审核失败: ' + error.message, 'error');
+        }
+      }
+      
+      // 工具函数
+      function getStatusColor(status) {
+        const colors = {
+          'pending': 'text-yellow-600',
+          'approved': 'text-green-600',
+          'rejected': 'text-red-600',
+          'paid': 'text-blue-600'
+        };
+        return colors[status] || 'text-gray-600';
+      }
+      
+      function getStatusText(status) {
+        const texts = {
+          'pending': '待审核',
+          'approved': '已通过',
+          'rejected': '已拒绝',
+          'paid': '已支付'
+        };
+        return texts[status] || status;
+      }
+      
+      function formatTime(timestamp) {
+        if (!timestamp) return '';
+        return new Date(timestamp * 1000).toLocaleString();
+      }
+      
+      // 绑定事件
+      document.getElementById('btn-payouts-refresh')?.addEventListener('click', loadPayouts);
+      document.getElementById('btn-payout-approve')?.addEventListener('click', () => reviewPayout('approved'));
+      document.getElementById('btn-payout-reject')?.addEventListener('click', () => reviewPayout('rejected'));
+      document.getElementById('btn-payout-paid')?.addEventListener('click', () => reviewPayout('paid'));
+
+      btnLoadUser?.addEventListener('click', loadUser);
+      btnLoadAuth?.addEventListener('click', loadAuth);
+      refreshStatus();
+      btnLogPrev?.addEventListener('click', ()=>{ logPage = Math.max(1, logPage-1); renderLog(); });
+      btnLogNext?.addEventListener('click', ()=>{ const totalPages = Math.max(1, Math.ceil(logLines.length/LOG_PAGE_SIZE)); logPage = Math.min(totalPages, logPage+1); renderLog(); });
+      document.getElementById('btn-clear-log')?.addEventListener('click', ()=>{ logLines = []; logPage = 1; renderLog(); });
+    })();
+  </script>
+</body>
+</html>
+
+

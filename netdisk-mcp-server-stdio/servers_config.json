@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "baidu-netdisk-local-uploader": {
+      "command": "uv",
+      "args": [
+        "run",
+        "python",
+        "netdisk.py"
+      ],
+      "env": {
+        "BAIDU_NETDISK_ACCESS_TOKEN": "test_token"
+      }
+    }
+  }
+}
