@@ -438,6 +438,83 @@ async def api_listings_detail(listing_id: int, seller_id: Optional[str] = Query(
     finally:
         conn.close()
 
+@router.get("/files")
+async def api_listings_files(
+    keyword: Optional[str] = None,
+    listing_type: Optional[str] = None,
+    dir_path: Optional[str] = None,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0)
+):
+    """基于已上架商品的文件维度分页列表。用于商品市场直接展示同步文件。
+
+    返回 { status, total, items: [ {listing_id, file_id, title, file_name, file_path, file_size, price_cents, listing_type, seller:{}, published_at} ] }
+    仅返回 l.status = 'live' AND l.review_status='approved' 的商品关联文件。
+    """
+    db_path = init_sync_db()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    try:
+        where_clause = "WHERE l.status = 'live' AND l.review_status = 'approved'"
+        params: list = []
+
+        if keyword:
+            where_clause += " AND (l.title LIKE ? OR l.description LIKE ? OR lf.file_name LIKE ?)"
+            kw = f"%{keyword}%"
+            params.extend([kw, kw, kw])
+
+        if listing_type:
+            where_clause += " AND l.listing_type = ?"
+            params.append(listing_type)
+
+        if dir_path:
+            where_clause += " AND (lf.file_path LIKE ?)"
+            params.append(f"{dir_path}%")
+
+        cursor.execute(f'''
+            SELECT lf.id as file_id, lf.listing_id, lf.file_name, lf.file_path, lf.file_size,
+                   l.price_cents, l.listing_type, l.published_at,
+                   u.user_id, u.display_name, u.avatar_url, l.title
+            FROM listing_files lf
+            INNER JOIN listings l ON lf.listing_id = l.id
+            LEFT JOIN users u ON l.seller_id = u.user_id
+            {where_clause}
+            ORDER BY l.published_at DESC, lf.id DESC
+            LIMIT ? OFFSET ?
+        ''', (*params, limit, offset))
+
+        rows = cursor.fetchall()
+        items = []
+        for row in rows:
+            items.append({
+                "file_id": row[0],
+                "listing_id": row[1],
+                "file_name": row[2],
+                "file_path": row[3],
+                "file_size": row[4],
+                "price_cents": row[5],
+                "listing_type": row[6],
+                "published_at": row[7],
+                "seller": {"user_id": row[8], "display_name": row[9], "avatar_url": row[10]},
+                "title": row[11] or row[2],
+                "description": row[2]
+            })
+
+        # total
+        cursor.execute(f'''
+            SELECT COUNT(*)
+            FROM listing_files lf
+            INNER JOIN listings l ON lf.listing_id = l.id
+            {where_clause}
+        ''', params)
+        total = cursor.fetchone()[0]
+
+        return JSONResponse({"status": "success", "items": items, "total": total})
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+    finally:
+        conn.close()
+
 @router.get("/public")
 async def api_listings_public(keyword: Optional[str] = None,
                              listing_type: Optional[str] = None,
