@@ -878,6 +878,11 @@
 
           if (!title) { Global.notify('请填写标题', 'error'); return; }
           if (!price_cents || price_cents <= 0) { Global.notify('请填写有效的价格', 'error'); return; }
+          if (!file) { Global.notify('请选择文件', 'error'); return; }
+
+          // 先关闭弹窗，避免阻塞UI，再进行异步上传
+          document.getElementById('create-listing-modal').classList.add('hidden');
+          try { Global.notify('已开始后台上传与创建商品，请稍候…', 'info'); } catch(_) {}
 
           let files = [];
           if (file) {
@@ -917,7 +922,6 @@
               await fetch(`/api/listings/${data.listing_id || data.listingId || data.id || (data.listing && data.listing.id)}/submit`, { method: 'POST' });
             } catch (_) {}
             Global.notify('创建商品成功，已提交上架审核', 'success');
-            document.getElementById('create-listing-modal').classList.add('hidden');
             // 刷新自己的商品或市场列表
             if (currentTab === 'market') { loadListings(); }
           } else {
