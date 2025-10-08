@@ -69,6 +69,9 @@ if os.path.exists(src_dir):
     assets_dir = os.path.join(src_dir, "assets")
     mount_dir = assets_dir if os.path.exists(assets_dir) else src_dir
     app.mount("/assets", StaticFiles(directory=mount_dir), name="assets")
+    
+    # 挂载整个src目录，提供HTML页面访问
+    app.mount("/src", StaticFiles(directory=src_dir), name="src")
 
 # 导入并注册API路由
 from api.auth import router as auth_router

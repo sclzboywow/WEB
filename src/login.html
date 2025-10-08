@@ -64,7 +64,7 @@
     const dbgClear = document.getElementById('dbg-clear');
     const dbgFire = document.getElementById('dbg-fire');
     let pollTimer = null;
-    const base = 'http://118.24.67.10:8000/oauth/url';
+    const base = 'http://118.24.67.10:8000/oauth';
 
     function log(msg){
       const t = new Date().toLocaleTimeString();
@@ -82,35 +82,55 @@
     async function requestAuth(){
       log('发起：获取授权流程');
       try{
+        // 禁用按钮，显示加载状态
+        btn.disabled = true;
+        btn.textContent = '获取中...';
         statusEl.textContent = '状态：获取授权链接中...';
-        log('开始请求: ' + base + '/oauth/url');
-        const r = await fetch(base + '/oauth/url');
+        statusEl.className = 'mt-2 text-blue-600';
+        
+        log('开始请求: ' + base + '/url');
+        const r = await fetch(base + '/url');
         log('响应状态: ' + r.status);
         const data = await r.json();
         log('响应JSON: ' + JSON.stringify(data));
         if(data.status !== 'success') throw new Error(data.message || '获取授权链接失败');
+        
         const authUrl = data.auth_url;
         img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(authUrl);
         img.onclick = ()=>{ window.open(authUrl, '_blank'); };
         if(linkEl){ linkEl.href = authUrl; linkEl.classList.remove('hidden'); }
+        
+        // 更新UI状态
         tipEl.textContent = '请使用手机百度网盘扫码授权';
-        statusEl.textContent = '状态：等待扫码中';
+        statusEl.textContent = '状态：等待扫码中...';
+        statusEl.className = 'mt-2 text-orange-600';
+        btn.textContent = '重新获取';
+        btn.disabled = false;
+        
+        // 开始轮询授权状态
         if(pollTimer) clearInterval(pollTimer);
         pollTimer = setInterval(async ()=>{
           try{
-            const r2 = await fetch(base + '/oauth/status', {cache:'no-store'});
+            const r2 = await fetch(base + '/status', {cache:'no-store'});
             const s = await r2.json();
             if(s.authorized){
               clearInterval(pollTimer); pollTimer = null;
-              statusEl.textContent = '状态：授权完成，跳转管理页...';
-              log('授权完成，即将跳转 /admin');
+              statusEl.textContent = '状态：授权完成！';
+              statusEl.className = 'mt-2 text-green-600 font-medium';
+              tipEl.textContent = '授权成功，正在跳转...';
+              log('授权完成，即将跳转管理页面');
               try{ Global.notify('授权完成，正在进入管理后台', 'success'); }catch(e){}
-              setTimeout(()=>{ window.location.href = '/admin'; }, 600);
+              setTimeout(()=>{ window.location.href = '/src/admin.html'; }, 1000);
             }
-          }catch(e){}
+          }catch(e){
+            log('轮询状态出错: ' + e.message);
+          }
         }, 2000);
       }catch(e){
         statusEl.textContent = '状态：' + (e.message || '发生错误');
+        statusEl.className = 'mt-2 text-red-600';
+        btn.textContent = '重新获取';
+        btn.disabled = false;
         log('发生错误: ' + (e && e.message ? e.message : String(e)));
       }
     }
@@ -119,11 +139,9 @@
     wrap?.addEventListener('click', requestAuth);
     dbgFire?.addEventListener('click', requestAuth);
 
-    const params = new URLSearchParams(location.search);
-    if(params.get('auto') === '1'){
-      log('检测到 auto=1，自动发起授权请求');
-      requestAuth();
-    }
+    // 页面加载时自动获取二维码
+    log('页面加载完成，自动获取二维码');
+    requestAuth();
   })();
   </script>
 </body>

@@ -8,7 +8,7 @@
 import sqlite3
 import time
 from fastapi import APIRouter, Query, Header, Depends, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, HTMLResponse, PlainTextResponse
 from typing import Dict, Any, Optional
 
 from services.db import init_sync_db
@@ -503,3 +503,139 @@ async def api_payment_callback(payload: Dict[str, Any], x_callback_secret: str =
     resp = process_payment_callback(transaction_id, status, int(amount_cents), message)
     status_code = 200 if resp.get("status") == "success" else 400
     return JSONResponse(resp, status_code=status_code)
+
+# =============== Alipay 同步/异步回调 ===============
+from fastapi import Request, Form
+from typing import Optional
+from services.payment_service import load_platform_payment_config
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
+from cryptography.hazmat.primitives.asymmetric import padding
+from cryptography.hazmat.primitives import hashes
+import base64
+
+def _ordered_query_no_sign(params: Dict[str, Any]) -> str:
+    data = {k: v for k, v in params.items() if k not in ("sign", "sign_type") and v is not None}
+    items = sorted(data.items(), key=lambda x: x[0])
+    return "&".join([f"{k}={v}" for k, v in items])
+
+def _verify_alipay_signature(params: Dict[str, Any]) -> bool:
+    try:
+        cfg = load_platform_payment_config('alipay') or {}
+        public_key_pem = (cfg.get('public_key') or '').strip()
+        if not public_key_pem:
+            # 未配置公钥则无法校验，出于安全返回 False
+            return False
+        sign = params.get('sign')
+        if not sign:
+            return False
+        content = _ordered_query_no_sign(params)
+        public_key = load_pem_public_key(public_key_pem.encode('utf-8'))
+        signature = base64.b64decode(sign)
+        public_key.verify(
+            signature,
+            content.encode('utf-8'),
+            padding.PKCS1v15(),
+            hashes.SHA256()
+        )
+        return True
+    except Exception:
+        return False
+
+@router.get("/alipay/return")
+async def alipay_return(request: Request):
+    """支付宝同步返回（用户支付完成后的浏览器跳转）。
+    校验签名后，若成功则尝试落库并展示结果。
+    """
+    from services.order_service import process_payment_callback
+    import sqlite3
+    from services.db import init_sync_db
+
+    query = dict(request.query_params)
+    valid = _verify_alipay_signature(query)
+
+    out_trade_no = query.get('out_trade_no')
+    trade_status = query.get('trade_status')
+    total_amount_str = query.get('total_amount')
+    amount_cents = None
+    try:
+        if total_amount_str is not None:
+            amount_cents = int(round(float(total_amount_str) * 100))
+    except Exception:
+        amount_cents = None
+
+    processed = None
+    if valid and out_trade_no and (trade_status == 'TRADE_SUCCESS' or trade_status == 'TRADE_FINISHED'):
+        # 若未提供金额，则从数据库读取订单期望金额
+        if amount_cents is None:
+            try:
+                db_path = init_sync_db()
+                conn = sqlite3.connect(db_path)
+                cur = conn.cursor()
+                cur.execute('SELECT amount_cents FROM order_payments WHERE transaction_id = ? LIMIT 1', (out_trade_no,))
+                row = cur.fetchone()
+                conn.close()
+                amount_cents = int(row[0]) if row and row[0] is not None else 0
+            except Exception:
+                amount_cents = 0
+        try:
+            processed = process_payment_callback(out_trade_no, 'success', int(amount_cents or 0), message='alipay.return')
+        except Exception as e:
+            processed = {"status": "error", "message": str(e)}
+
+    # 返回一个简单的结果页面
+    result_text = "支付成功" if (valid and processed and processed.get('status') == 'success') else "支付结果待确认"
+    detail_text = "签名校验失败" if not valid else (processed.get('message') if processed and processed.get('status') != 'success' else "")
+    html = f"""
+    <!DOCTYPE html>
+    <html><head><meta charset='utf-8'><title>支付结果</title></head>
+    <body>
+      <h2>{result_text}</h2>
+      <p>订单号: {out_trade_no or ''}</p>
+      <p>状态: {trade_status or ''}</p>
+      <p style='color:#888'>{detail_text}</p>
+    </body></html>
+    """
+    return HTMLResponse(html)
+
+@router.post("/alipay/notify")
+async def alipay_notify(request: Request):
+    """支付宝服务器异步通知（必须公网可达）。
+    验证签名，按状态更新订单与资金，并返回 success 确认。
+    """
+    from services.order_service import process_payment_callback
+
+    form = await request.form()
+    params = {k: form.get(k) for k in form.keys()}
+    valid = _verify_alipay_signature(params)
+
+    if not valid:
+        # 按支付宝规范，签名失败返回 400/"fail"
+        return PlainTextResponse("fail", status_code=400)
+
+    out_trade_no = params.get('out_trade_no')
+    trade_status = params.get('trade_status')
+    total_amount_str = params.get('total_amount')
+
+    if not out_trade_no or not trade_status:
+        return PlainTextResponse("fail", status_code=400)
+
+    try:
+        amount_cents = int(round(float(total_amount_str) * 100)) if total_amount_str is not None else 0
+    except Exception:
+        amount_cents = 0
+
+    try:
+        if trade_status == 'TRADE_SUCCESS' or trade_status == 'TRADE_FINISHED':
+            process_payment_callback(out_trade_no, 'success', int(amount_cents or 0), message='alipay.notify')
+        elif trade_status in ('WAIT_BUYER_PAY',):
+            # 未支付完成，忽略
+            pass
+        else:
+            # 失败/关闭等
+            process_payment_callback(out_trade_no, 'failed', int(amount_cents or 0), message=f'alipay.notify:{trade_status}')
+    except Exception:
+        # 内部处理异常也返回 fail，让支付宝稍后重试
+        return PlainTextResponse("fail", status_code=500)
+
+    # 按支付宝要求返回 success
+    return PlainTextResponse("success", status_code=200)
