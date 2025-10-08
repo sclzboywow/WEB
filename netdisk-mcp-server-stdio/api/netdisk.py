@@ -5,7 +5,7 @@
 提供百度网盘文件管理功能的RESTful接口
 """
 
-from fastapi import APIRouter, HTTPException, Query, Path, UploadFile, File
+from fastapi import APIRouter, HTTPException, Query, Path, UploadFile, File, Body, Request
 from typing import List, Optional, Dict, Any
 import os
 import sys
@@ -16,6 +16,9 @@ import random
 import threading
 from collections import defaultdict, deque
 import datetime
+import tempfile
+import shutil
+import uuid
 
 # 添加当前目录到系统路径
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -68,6 +71,8 @@ def get_requests_session():
 
 # 定义分片大小为4MB
 CHUNK_SIZE = 4 * 1024 * 1024  # 4MB
+# 最大允许上传大小（字节）
+MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100MB
 # 定义重试次数和超时时间
 MAX_RETRIES = 3
 RETRY_BACKOFF = 2
@@ -279,6 +284,113 @@ def configure_session():
     session.mount("http://", adapter)
     return session
 
+def _normalize_dir_path(path: str) -> str:
+    if not isinstance(path, str) or not path.strip():
+        return "/"
+    p = path.strip()
+    if not p.startswith('/'):
+        p = f"/{p}"
+    # remove trailing slash except root
+    if len(p) > 1:
+        p = p.rstrip('/')
+    return p
+
+async def _dir_exists(dir_path: str) -> bool:
+    """检查目录是否存在。"""
+    try:
+        parent = dir_path.rsplit('/', 1)[0] or '/'
+        name = dir_path.rsplit('/', 1)[1] if '/' in dir_path else dir_path
+        # 复用 list_files 逻辑（HTTP 回退已内置）
+        res = await list_files(path=parent, start=0, limit=1000)
+        if res.get('status') != 'success':
+            return False
+        for it in res.get('files', []) or []:
+            if (it.get('isdir') == 1) and (it.get('name') == name or it.get('path') == dir_path):
+                return True
+        return False
+    except Exception:
+        return False
+
+def _create_dir_http(full_path: str) -> Dict[str, Any]:
+    """使用 HTTP create 接口创建目录（isdir=1）。"""
+    return _request_pan_api(
+        'https://pan.baidu.com/rest/2.0/xpan/file',
+        {
+            'method': 'create',
+            'path': full_path,
+            'size': 0,
+            'isdir': 1,
+            'rtype': 0,
+        }
+    )
+
+@router.post("/ensure-dir")
+async def ensure_directory(
+    path: Optional[str] = Body(default=None, embed=True, description="要确保存在的目录路径；为空则使用默认上传目录")
+):
+    """
+    确保指定网盘目录存在（如不存在则逐级创建）。
+
+    - 默认目录：读取环境变量 DEFAULT_DIR_UPLOAD；若为空，按业务需要回退到 "/商品市场/待审核文档"。
+    - 逐级创建，避免一次性创建深层目录失败。
+    """
+    try:
+        # 解析默认目录
+        if not path or not str(path).strip():
+            default_upload = os.getenv('DEFAULT_DIR_UPLOAD')
+            if not default_upload or not default_upload.strip():
+                default_upload = '/商品市场/待审核文档'
+            target_dir = _normalize_dir_path(default_upload)
+        else:
+            target_dir = _normalize_dir_path(path)
+
+        # 已存在直接返回
+        if await _dir_exists(target_dir):
+            return {"status": "success", "message": "目录已存在", "path": target_dir, "created": []}
+
+        # 逐级创建
+        created: list[str] = []
+        parts = [seg for seg in target_dir.split('/') if seg]
+        cur = ''
+        for seg in parts:
+            cur = f"{cur}/{seg}" if cur else f"/{seg}"
+            if await _dir_exists(cur):
+                continue
+            # SDK 优先，若无则 HTTP create
+            try:
+                try:
+                    sdks = _get_sdk_clients()
+                    token = _ensure_access_token()
+                    resp = sdks['upload'].xpanfilecreate(
+                        access_token=token,
+                        path=cur,
+                        isdir=1,
+                        size=0,
+                        uploadid="",
+                        block_list="[]",
+                        rtype=0
+                    )
+                    # 部分 SDK 返回非 dict；若包含 errno 则校验
+                    if isinstance(resp, dict) and resp.get('errno', 0) not in (0, None):
+                        raise Exception(f"sdk errno {resp.get('errno')}")
+                except Exception:
+                    resp = _create_dir_http(cur)
+                    if resp.get('status') == 'error':
+                        # errno=12 通常为已存在，忽略
+                        if str(resp.get('errno')) not in ('12',):
+                            raise HTTPException(status_code=400, detail=f"创建目录失败: {resp.get('message') or resp}")
+                created.append(cur)
+            except HTTPException:
+                raise
+            except Exception as e:
+                raise HTTPException(status_code=500, detail=f"创建目录时发生错误: {str(e)}")
+
+        return {"status": "success", "message": "目录已确保存在", "path": target_dir, "created": created}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"确保目录存在时发生错误: {str(e)}")
+
 @router.get("/files")
 async def list_files(
     path: str = Query("/", description="网盘路径，默认为根目录"),
@@ -405,6 +517,7 @@ async def list_directories(
 
 @router.post("/upload")
 async def upload_file(
+    request: Request,
     file: UploadFile = File(..., description="要上传的文件"),
     remote_path: Optional[str] = Query(None, description="网盘存储路径，如不指定将使用默认路径"),
     ondup: str = Query("ask", description="重名处理：ask|overwrite|rename|skip")
@@ -514,19 +627,51 @@ async def upload_file(
                 remote_path = f"{parent_dir.rstrip('/')}/{base_name}"
             # ondup == 'overwrite' 则继续后续流程（create 时 rtype=3 覆盖/新副本）
 
-        # 读取文件内容（一次内存读取，适合中等大小文件）；如需超大文件可改为流式双遍历
-        content = await file.read()
-        file_size = len(content)
+        # 输入大小预检（Content-Length）
+        try:
+            clen = request.headers.get('content-length')
+            if clen and int(clen) > MAX_UPLOAD_SIZE + (2 * 1024 * 1024):  # 粗略上限（含表单开销）
+                raise HTTPException(status_code=413, detail=f"上传大小超限，最大允许 {MAX_UPLOAD_SIZE // (1024*1024)}MB")
+        except Exception:
+            pass
+
+        # 流式写入临时文件并计算每片 MD5（双遍历准备）
+        temp_dir = tempfile.mkdtemp(prefix="mcp_up_")
+        temp_path = os.path.join(temp_dir, f"{uuid.uuid4().hex}.bin")
+        bytes_read = 0
+        md5_list: list[str] = []
+        try:
+            with open(temp_path, 'wb') as tf:
+                while True:
+                    part = await file.read(CHUNK_SIZE)
+                    if not part:
+                        break
+                    bytes_read += len(part)
+                    if bytes_read > MAX_UPLOAD_SIZE:
+                        raise HTTPException(status_code=413, detail=f"上传大小超限，最大允许 {MAX_UPLOAD_SIZE // (1024*1024)}MB")
+                    tf.write(part)
+                    md5_list.append(hashlib.md5(part).hexdigest())
+        except HTTPException:
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
+            raise
+        except Exception as e:
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
+            raise HTTPException(status_code=500, detail=f"接收上传时发生错误: {str(e)}")
+
+        file_size = bytes_read
         if file_size == 0:
+            try:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception:
+                pass
             raise HTTPException(status_code=400, detail="空文件不可上传")
 
-        # 切分分片并计算每片 MD5
-        chunks: list[bytes] = []
-        md5_list: list[str] = []
-        for start in range(0, file_size, CHUNK_SIZE):
-            part = content[start:start + CHUNK_SIZE]
-            chunks.append(part)
-            md5_list.append(hashlib.md5(part).hexdigest())
         block_list_str = json.dumps(md5_list)
 
         # 1) precreate（SDK 优先）
@@ -563,37 +708,54 @@ async def upload_file(
         if not uploadid:
             raise HTTPException(status_code=400, detail="预创建失败：缺少 uploadid")
 
-        # 2) superfile2 按分片上传
+        # 2) superfile2 按分片上传（从临时文件读取）
         requests, _, _ = get_requests_session()
         token = _ensure_access_token()
         if not token:
             raise HTTPException(status_code=400, detail="missing access_token")
         try:
             sdks = _get_sdk_clients()
-            for idx, part in enumerate(chunks):
-                sdks['upload'].pcssuperfile2(
-                    access_token=token,
-                    partseq=str(idx),
-                    path=remote_path,
-                    uploadid=uploadid,
-                    type='tmpfile',
-                    file=part
-                )
+            with open(temp_path, 'rb') as tf:
+                idx = 0
+                while True:
+                    part = tf.read(CHUNK_SIZE)
+                    if not part:
+                        break
+                    sdks['upload'].pcssuperfile2(
+                        access_token=token,
+                        partseq=str(idx),
+                        path=remote_path,
+                        uploadid=uploadid,
+                        type='tmpfile',
+                        file=part
+                    )
+                    idx += 1
         except Exception:
             up_url = 'https://d.pcs.baidu.com/rest/2.0/pcs/superfile2'
-            for idx, part in enumerate(chunks):
-                up_params = {
-                    'method': 'upload',
-                    'access_token': token,
-                    'type': 'tmpfile',
-                    'path': remote_path,
-                    'uploadid': uploadid,
-                    'partseq': idx,
-                }
-                files_map = {'file': (file.filename, part)}
-                up_resp = requests.post(up_url, params=up_params, files=files_map, timeout=TIMEOUT)
-                if not up_resp.ok:
-                    raise HTTPException(status_code=400, detail=f"上传分片 {idx} 失败: {up_resp.text}")
+            with open(temp_path, 'rb') as tf:
+                idx = 0
+                while True:
+                    part = tf.read(CHUNK_SIZE)
+                    if not part:
+                        break
+                    up_params = {
+                        'method': 'upload',
+                        'access_token': token,
+                        'type': 'tmpfile',
+                        'path': remote_path,
+                        'uploadid': uploadid,
+                        'partseq': idx,
+                    }
+                    files_map = {'file': (file.filename, part)}
+                    up_resp = requests.post(up_url, params=up_params, files=files_map, timeout=TIMEOUT)
+                    if not up_resp.ok:
+                        # 清理后报错
+                        try:
+                            shutil.rmtree(temp_dir, ignore_errors=True)
+                        except Exception:
+                            pass
+                        raise HTTPException(status_code=400, detail=f"上传分片 {idx} 失败: {up_resp.text}")
+                    idx += 1
                 # 有些返回含 md5 字段，但无需强校验（不同接口字段差异）
 
         # 3) create 完成
@@ -640,6 +802,12 @@ async def upload_file(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"上传文件时发生错误: {str(e)}")
+    finally:
+        try:
+            if 'temp_dir' in locals():
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        except Exception:
+            pass
 
 @router.get("/search")
 async def search_files(

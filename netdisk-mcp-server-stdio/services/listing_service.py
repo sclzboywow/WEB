@@ -11,6 +11,24 @@ import time
 from typing import Dict, Any, List, Optional
 from .db import init_sync_db
 
+def _normalize_listing_type(input_type: str) -> str:
+    """将前端传入的 listing_type 规范化为内部存储值。"""
+    if not input_type:
+        return "single"
+    t = str(input_type).strip().lower()
+    mapping = {
+        # 中文映射
+        "文档": "document",
+        "圖紙": "drawing",
+        "图纸": "drawing",
+        # 常见英文别名
+        "doc": "document",
+        "document": "document",
+        "drawing": "drawing",
+    }
+    return mapping.get(input_type, mapping.get(t, t))
+
+
 def create_listing(seller_id: str, title: str, price_cents: int,
                    listing_type: str = "single", description: str = "", 
                    files: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
@@ -20,7 +38,10 @@ def create_listing(seller_id: str, title: str, price_cents: int,
     if not seller_id or not title or price_cents <= 0:
         return {"status": "error", "message": "missing required parameters"}
     
-    if listing_type not in ["single", "bundle", "subscription", "limited"]:
+    # 规范化/校验类型
+    normalized_type = _normalize_listing_type(listing_type)
+    allowed_types = ["single", "bundle", "subscription", "limited", "document", "drawing"]
+    if normalized_type not in allowed_types:
         return {"status": "error", "message": "invalid listing_type"}
     
     db_path = init_sync_db()
@@ -28,12 +49,30 @@ def create_listing(seller_id: str, title: str, price_cents: int,
     cursor = conn.cursor()
     
     try:
+        # 校验文件类型与扩展名匹配（若提供了文件）
+        if files:
+            def _ext(name: Optional[str]) -> str:
+                if not name:
+                    return ""
+                n = str(name)
+                return n.rsplit('.', 1)[-1].lower() if '.' in n else ""
+            allowed_by_type = {
+                "document": {"pdf","doc","docx","xls","xlsx","ppt","pptx","txt","md","rtf","csv","epub","odt","ods"},
+                "drawing": {"dwg"}  # 如需支持 dxf，可添加到集合中
+            }
+            allow_exts = allowed_by_type.get(normalized_type, set())
+            if allow_exts:
+                for fi in files:
+                    name = (fi or {}).get('file_name') or (fi or {}).get('file_path') or ""
+                    if _ext(name) not in allow_exts:
+                        return {"status": "error", "message": f"文件类型与所选商品类型不匹配：仅允许 {', '.join(sorted(allow_exts))}"}
+
         # 插入商品记录
         cursor.execute('''
             INSERT INTO listings (seller_id, title, description, listing_type, 
                                 price_cents, status, review_status)
             VALUES (?, ?, ?, ?, ?, 'draft', 'pending')
-        ''', (seller_id, title, description, listing_type, price_cents))
+        ''', (seller_id, title, description, normalized_type, price_cents))
         
         listing_id = cursor.lastrowid
         

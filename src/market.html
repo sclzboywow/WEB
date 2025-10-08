@@ -43,12 +43,13 @@
             <button id="btn-notifications" class="btn btn-secondary">通知</button>
             <span id="unread-count" class="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center hidden">0</span>
           </div>
+          
         </div>
       </div>
     </div>
 
-    <!-- 导航标签 -->
-    <div class="mb-6">
+    <!-- 导航标签 + 上传文档按钮（右侧） -->
+    <div class="mb-6 flex items-center justify-between">
       <nav class="flex space-x-1 bg-gray-100 p-1 rounded-lg">
         <button id="tab-market" class="tab-btn px-4 py-2 rounded-md text-sm font-medium tab-active" data-tab="market">
           商品市场
@@ -60,6 +61,9 @@
           已购清单
         </button>
       </nav>
+      <div>
+        <button id="btn-upload-doc" class="tab-btn px-4 py-2 rounded-md text-sm font-medium tab-inactive">上传文档</button>
+      </div>
     </div>
 
     <!-- 搜索和筛选 -->
@@ -173,6 +177,46 @@
     </div>
   </div>
 
+  <!-- 上传文档并创建商品 模态框 -->
+  <div id="create-listing-modal" class="modal hidden fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-30">
+    <div class="modal-content w-full max-w-lg bg-white rounded-lg p-6 shadow-lg">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-lg font-semibold">上传文档并创建商品</h3>
+        <button id="close-create-listing" class="text-gray-500 hover:text-gray-700 text-xl">&times;</button>
+      </div>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm text-gray-700 mb-1">标题</label>
+          <input id="cl-title" type="text" class="w-full px-3 py-2 border rounded" placeholder="请输入商品标题" />
+        </div>
+        <div>
+          <label class="block text-sm text-gray-700 mb-1">价格（元）</label>
+          <input id="cl-price" type="number" min="0" step="0.01" class="w-full px-3 py-2 border rounded" placeholder="如 9.90" />
+        </div>
+        <div>
+          <label class="block text-sm text-gray-700 mb-1">类型</label>
+          <select id="cl-type" class="w-full px-3 py-2 border rounded">
+            <option value="文档">文档</option>
+            <option value="图纸">图纸</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm text-gray-700 mb-1">简介</label>
+          <textarea id="cl-desc" rows="4" class="w-full px-3 py-2 border rounded" placeholder="请输入商品简介"></textarea>
+        </div>
+        <div>
+          <label class="block text-sm text-gray-700 mb-1">文档文件</label>
+          <input id="cl-file" type="file" class="block w-full" />
+          <p class="text-xs text-gray-500 mt-1">文件将上传至默认目录（或 /商品市场/待审核文档）并关联为商品文件</p>
+        </div>
+        <div class="flex justify-end gap-2 pt-2">
+          <button id="btn-submit-listing" class="btn btn-primary">提交</button>
+          <button id="btn-cancel-listing" class="btn btn-secondary">取消</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- 通知模态框 -->
   <div id="notification-modal" class="modal hidden">
     <div class="modal-content max-w-2xl">
@@ -219,12 +263,32 @@
         await getCurrentUser();
         bindEvents();
         loadTabContent(currentTab);
-        loadUnreadCount(); // 加载未读通知数量
+        loadUnreadCount(); // 初始加载未读通知数量
+        // 启动通知轮询，动态刷新徽标
+        try {
+          Global.NotificationPoller.startPolling((count)=>{
+            const badge = document.getElementById('unread-count');
+            if (!badge) return;
+            if (count > 0) {
+              badge.textContent = count;
+              badge.classList.remove('hidden');
+            } else {
+              badge.classList.add('hidden');
+            }
+          });
+        } catch(_) {}
       }
 
       // 获取当前用户
       async function getCurrentUser() {
         try {
+          // 先读缓存
+          try {
+            const cached = Global.SessionManager.getStoredUserInfo && Global.SessionManager.getStoredUserInfo();
+            if (cached && cached.user_id) {
+              currentBuyerId = cached.user_id;
+            }
+          } catch (_) {}
           const response = await fetch('/oauth/session/latest');
           const data = await response.json();
           
@@ -233,6 +297,7 @@
             if (data.session && data.session.session_id) {
               try { localStorage.setItem('session_id', data.session.session_id); } catch {}
             }
+            try { localStorage.setItem('user_info', JSON.stringify(data)); } catch {}
             console.log('当前买家ID:', currentBuyerId);
           } else {
             // 如果没有登录，重定向到登录页
@@ -260,6 +325,59 @@
           currentPage = 1;
           loadListings();
         });
+
+        // 上传文档（弹窗创建商品）
+        document.getElementById('btn-upload-doc').addEventListener('click', () => {
+          document.getElementById('create-listing-modal').classList.remove('hidden');
+        });
+        document.getElementById('close-create-listing').addEventListener('click', () => {
+          document.getElementById('create-listing-modal').classList.add('hidden');
+        });
+        document.getElementById('btn-cancel-listing').addEventListener('click', () => {
+          document.getElementById('create-listing-modal').classList.add('hidden');
+        });
+        document.getElementById('create-listing-modal').addEventListener('click', (e) => {
+          if (e.target === e.currentTarget) e.currentTarget.classList.add('hidden');
+        });
+        function computeAccept(){
+          const t = (document.getElementById('cl-type').value||'').trim();
+          if(t==='图纸') return '.dwg';
+          // 文档
+          return '.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.md,.rtf,.csv,.epub,.odt,.ods';
+        }
+        document.getElementById('cl-type').addEventListener('change', ()=>{
+          const fi = document.getElementById('cl-file');
+          fi.setAttribute('accept', computeAccept());
+          fi.value = '';
+        });
+        const _fi = document.getElementById('cl-file');
+        _fi.setAttribute('accept', computeAccept());
+        document.getElementById('cl-file').addEventListener('change', (e) => {
+          const f = e.target.files && e.target.files[0];
+          if (f) {
+            const name = f.name || '';
+            const titleInput = document.getElementById('cl-title');
+            const descInput = document.getElementById('cl-desc');
+            if (titleInput && !titleInput.value) titleInput.value = name;
+            if (descInput && !descInput.value) descInput.value = name;
+            // 前端校验扩展名
+            const t = (document.getElementById('cl-type').value||'').trim();
+            const ext = name.includes('.') ? name.split('.').pop().toLowerCase() : '';
+            const docExts = ['pdf','doc','docx','xls','xlsx','ppt','pptx','txt','md','rtf','csv','epub','odt','ods'];
+            if(t==='图纸'){
+              if(ext!=='dwg'){
+                Global.notify('图纸类型仅支持 .dwg 文件', 'error');
+                e.target.value='';
+              }
+            }else{ // 文档
+              if(docExts.indexOf(ext)===-1){
+                Global.notify('文档类型仅支持常见文档格式', 'error');
+                e.target.value='';
+              }
+            }
+          }
+        });
+        document.getElementById('btn-submit-listing').addEventListener('click', submitCreateListing);
 
         // 搜索框回车
         document.getElementById('search-keyword').addEventListener('keypress', (e) => {
@@ -693,6 +811,69 @@
           }
         } catch (error) {
           Global.notify('购买失败: ' + error.message, 'error');
+        }
+      }
+
+      // 提交创建商品
+      async function submitCreateListing() {
+        try {
+          const title = document.getElementById('cl-title').value.trim();
+          const priceY = parseFloat(document.getElementById('cl-price').value);
+          const price_cents = Math.round((isNaN(priceY) ? 0 : priceY) * 100);
+          const listing_type = document.getElementById('cl-type').value || 'single';
+          const description = document.getElementById('cl-desc').value || '';
+          const fileInput = document.getElementById('cl-file');
+          const file = fileInput.files && fileInput.files[0];
+
+          if (!title) { Global.notify('请填写标题', 'error'); return; }
+          if (!price_cents || price_cents <= 0) { Global.notify('请填写有效的价格', 'error'); return; }
+
+          let files = [];
+          if (file) {
+            // 先确保目录
+            const ensureRes = await fetch('/api/netdisk/ensure-dir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+            const ensure = await ensureRes.json();
+            if (ensure.status !== 'success') { Global.notify('创建上传目录失败: ' + (ensure.message||''), 'error'); return; }
+            const targetDir = ensure.path || '/商品市场/待审核文档';
+
+            // 上传
+            const form = new FormData();
+            form.append('file', file);
+            form.append('remote_path', targetDir.endsWith('/') ? targetDir : (targetDir + '/'));
+            form.append('ondup', 'rename');
+            const upRes = await fetch('/api/netdisk/upload?ondup=rename&remote_path=' + encodeURIComponent(targetDir + '/'), { method: 'POST', body: form });
+            const up = await upRes.json();
+            if (up.status !== 'success') { Global.notify('文件上传失败: ' + (up.message||up.detail||''), 'error'); return; }
+            files = [{
+              file_path: up.remote_path,
+              file_name: up.filename,
+              file_size: up.size,
+              file_md5: (up.result && (up.result.md5 || up.result.md5s || '')) || ''
+            }];
+          }
+
+          // 创建 listing（需要当前登录的卖家身份）
+          const sessionId = (()=>{ try { return localStorage.getItem('session_id'); } catch { return null; } })();
+          const resp = await fetch('/api/listings', {
+            method: 'POST',
+            headers: Object.assign({ 'Content-Type': 'application/json' }, (sessionId ? { 'X-Session-Id': sessionId } : {})),
+            body: JSON.stringify({ title, price_cents, listing_type, description, files })
+          });
+          const data = await resp.json();
+          if (data.status === 'success') {
+            try {
+              // 自动提交审核
+              await fetch(`/api/listings/${data.listing_id || data.listingId || data.id || (data.listing && data.listing.id)}/submit`, { method: 'POST' });
+            } catch (_) {}
+            Global.notify('创建商品成功，已提交上架审核', 'success');
+            document.getElementById('create-listing-modal').classList.add('hidden');
+            // 刷新自己的商品或市场列表
+            if (currentTab === 'market') { loadListings(); }
+          } else {
+            Global.notify('创建商品失败: ' + (data.message||''), 'error');
+          }
+        } catch (e) {
+          Global.notify('创建商品失败: ' + (e && e.message ? e.message : e), 'error');
         }
       }
 
@@ -1162,6 +1343,7 @@
       window.copyPath = copyPath;
       window.downloadFile = downloadFile;
       window.viewPurchaseDetail = viewPurchaseDetail;
+      window.submitCreateListing = submitCreateListing;
 
       // 启动应用
       init();

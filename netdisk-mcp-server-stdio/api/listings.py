@@ -6,12 +6,16 @@
 """
 
 import sqlite3
+import os
 import time
 from fastapi import APIRouter, Query, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from typing import Dict, Any, List, Optional
 
 from services.db import init_sync_db
+from services.notify_service import send_listing_approved_notification, send_listing_rejected_notification
+from api.netdisk import move_files as _netdisk_move_files  # async
+from api.netdisk import ensure_directory as _netdisk_ensure_directory  # async
 from services.listing_service import create_listing, submit_listing_for_review
 from api.deps import get_current_user
 
@@ -134,14 +138,14 @@ async def api_listings_review(status: str = Query("pending"),
         
         for row in rows:
             listing_id = row[0]
-            
+
             # 获取文件列表
             cursor.execute('''
                 SELECT file_path, file_name, file_size
                 FROM listing_files
                 WHERE listing_id = ?
             ''', (listing_id,))
-            
+
             files = []
             for file_row in cursor.fetchall():
                 files.append({
@@ -149,7 +153,7 @@ async def api_listings_review(status: str = Query("pending"),
                     "file_name": file_row[1],
                     "file_size": file_row[2]
                 })
-            
+
             # 获取最近一次审核记录
             cursor.execute('''
                 SELECT status, remark, reviewer_id, reviewed_at
@@ -168,11 +172,11 @@ async def api_listings_review(status: str = Query("pending"),
                     "reviewer_id": review_row[2],
                     "reviewed_at": review_row[3]
                 }
-            
+
+            # 统一返回结构，包含 seller 对象（供管理端使用）
             listings.append({
                 "id": row[0],
                 "seller_id": row[1],
-                "seller_name": row[9],
                 "title": row[2],
                 "description": row[3],
                 "listing_type": row[4],
@@ -180,6 +184,7 @@ async def api_listings_review(status: str = Query("pending"),
                 "status": row[6],
                 "review_status": row[7],
                 "created_at": row[8],
+                "seller": {"user_id": row[1], "display_name": row[9]},
                 "files": files,
                 "last_review": last_review
             })
@@ -207,8 +212,13 @@ async def api_listings_review_action(listing_id: int, payload: Dict[str, Any], u
     status = payload.get("status")
     remark = payload.get("remark", "")
     reviewer_id = user.get("user_id") or "admin"
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="forbidden")
+    # 允许的审核角色/用户可通过环境变量配置
+    allowed_roles = [r.strip() for r in (os.getenv('REVIEWER_ROLES') or 'admin').split(',') if r.strip()]
+    allowed_users = [u.strip() for u in (os.getenv('REVIEWER_USER_IDS') or '').split(',') if u.strip()]
+    uid = user.get("user_id")
+    urole = user.get("role")
+    if (urole not in allowed_roles) and (uid not in allowed_users):
+        raise HTTPException(status_code=403, detail="forbidden: reviewer not allowed")
     
     if not status or status not in ["approved", "rejected"]:
         return JSONResponse({"status": "error", "message": "invalid status"}, status_code=400)
@@ -236,6 +246,56 @@ async def api_listings_review_action(listing_id: int, payload: Dict[str, Any], u
         
         now = time.time()
         
+        # 读取该 listing 的文件列表
+        cursor.execute('''
+            SELECT id, file_path, file_name
+            FROM listing_files
+            WHERE listing_id = ?
+        ''', (listing_id,))
+        file_rows = cursor.fetchall() or []
+
+        # 目标目录（根据审核结果选择不同目录），并确保存在
+        if status == 'approved':
+            dst_dir = os.getenv('DEFAULT_DIR_MOVE_DST')
+            if not dst_dir or not str(dst_dir).strip():
+                dst_dir = '/商品市场/已上架文档'
+        else:
+            dst_dir = os.getenv('DEFAULT_DIR_REJECT_DST')
+            if not dst_dir or not str(dst_dir).strip():
+                dst_dir = '/商品市场/已驳回'
+
+        # 确保网盘目录存在
+        try:
+            await _netdisk_ensure_directory(path=dst_dir)
+        except Exception:
+            # 不阻断事务，但会在最后统一反馈
+            pass
+
+        # 构造移动操作
+        ops = []
+        id_to_newpath = {}
+        for fid, fpath, fname in file_rows:
+            if not fpath:
+                # 跳过空路径
+                continue
+            base = fname or (fpath.rsplit('/', 1)[-1] if '/' in fpath else fpath)
+            new_path = (dst_dir.rstrip('/') + '/' + base)
+            ops.append({"path": fpath, "dest": new_path})
+            id_to_newpath[fid] = new_path
+
+        # 调用网盘移动（按 fail 策略，避免覆盖）
+        if ops:
+            try:
+                await _netdisk_move_files(ops, ondup='fail')
+                # 网盘移动成功后，更新本地记录
+                for fid, new_path in id_to_newpath.items():
+                    cursor.execute('''
+                        UPDATE listing_files SET file_path = ? WHERE id = ?
+                    ''', (new_path, fid))
+            except Exception:
+                # 若网盘移动失败，不回滚审核结果，但不更新文件路径
+                pass
+
         # 更新商品状态
         if status == "approved":
             cursor.execute('''
@@ -244,6 +304,15 @@ async def api_listings_review_action(listing_id: int, payload: Dict[str, Any], u
                     published_at = ?, updated_at = ?
                 WHERE id = ?
             ''', (remark, now, now, listing_id))
+            # 发送审核通过通知
+            try:
+                # 获取 seller_id 与 title
+                cursor.execute('SELECT seller_id, title FROM listings WHERE id = ?', (listing_id,))
+                _row = cursor.fetchone()
+                if _row:
+                    send_listing_approved_notification(_row[0], listing_id, _row[1])
+            except Exception:
+                pass
         else:
             cursor.execute('''
                 UPDATE listings 
@@ -251,7 +320,15 @@ async def api_listings_review_action(listing_id: int, payload: Dict[str, Any], u
                     updated_at = ?
                 WHERE id = ?
             ''', (remark, now, listing_id))
-        
+            # 发送审核拒绝通知
+            try:
+                cursor.execute('SELECT seller_id, title FROM listings WHERE id = ?', (listing_id,))
+                _row = cursor.fetchone()
+                if _row:
+                    send_listing_rejected_notification(_row[0], listing_id, _row[1], remark or '')
+            except Exception:
+                pass
+
         # 创建审核记录
         cursor.execute('''
             INSERT INTO listing_reviews (listing_id, reviewer_id, status, remark, reviewed_at)
@@ -340,6 +417,7 @@ async def api_listings_detail(listing_id: int, seller_id: Optional[str] = Query(
                 "id": row[0],
                 "seller_id": row[1],
                 "seller_name": row[12],
+                "seller": {"user_id": row[1], "display_name": row[12]},
                 "title": row[2],
                 "description": row[3],
                 "listing_type": row[4],

@@ -118,9 +118,34 @@
               statusEl.textContent = '状态：授权完成！';
               statusEl.className = 'mt-2 text-green-600 font-medium';
               tipEl.textContent = '授权成功，正在跳转...';
-              log('授权完成，即将跳转管理页面');
-              try{ Global.notify('授权完成，正在进入管理后台', 'success'); }catch(e){}
-              setTimeout(()=>{ window.location.href = '/src/admin.html'; }, 1000);
+              log('授权完成，开始拉取用户与配置并分流');
+              try{
+                // 拉取配置，获取 adminUk
+                const cfgR = await fetch('/api/config/defaults');
+                const cfgJ = await cfgR.json();
+                const adminCfg = ((cfgJ||{}).defaults||{}).admin || {};
+                const adminUk = adminCfg.admin_uk || '';
+                const reviewerIds = Array.isArray(adminCfg.reviewer_user_ids) ? adminCfg.reviewer_user_ids.map(String) : [];
+                // 拉取用户信息
+                const uR = await fetch('/user/info');
+                const uJ = await uR.json();
+                const userUk = ((uJ||{}).user_info||{}).uk || ((uJ||{}).uk);
+                // 持久化会话ID，避免刷新后丢失登录
+                try{
+                  const sessR = await fetch('/oauth/session/latest', { cache: 'no-store' });
+                  const sessJ = await sessR.json();
+                  if (sessJ && sessJ.session && sessJ.session.session_id) {
+                    try { localStorage.setItem('session_id', sessJ.session.session_id); } catch(_){ }
+                    try { localStorage.setItem('user_info', JSON.stringify(sessJ)); } catch(_){ }
+                  }
+                }catch(_){ }
+                const isAdmin = (adminUk && String(userUk) === String(adminUk)) || (reviewerIds.includes(String(userUk)));
+                try{ Global.notify(isAdmin ? '授权完成，进入管理后台' : '授权完成，进入用户中心', 'success'); }catch(e){}
+                setTimeout(()=>{ window.location.href = isAdmin ? '/src/admin.html' : '/user.html'; }, 800);
+              }catch(_e){
+                // 兜底：拉取失败仍跳用户页
+                setTimeout(()=>{ window.location.href = '/user.html'; }, 800);
+              }
             }
           }catch(e){
             log('轮询状态出错: ' + e.message);

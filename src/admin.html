@@ -43,6 +43,7 @@
           <nav id="sidebar" class="space-y-1 text-sm">
             <a href="#" data-sec="sec-auth" class="block px-3 py-2 rounded hover:bg-gray-100">授权状态</a>
             <a href="#" data-sec="sec-user" class="block px-3 py-2 rounded hover:bg-gray-100">用户信息</a>
+            <a href="/market.html" class="block px-3 py-2 rounded hover:bg-gray-100" target="_blank" rel="noopener">商品市场</a>
             <a href="#" data-sec="sec-result" class="block px-3 py-2 rounded hover:bg-gray-100">授权结果</a>
             <div class="h-px bg-gray-200 my-2"></div>
             <a href="#" data-sec="sec-files" class="block px-3 py-2 rounded hover:bg-gray-100">文件列表</a>
@@ -2677,6 +2678,33 @@
           }
         });
 
+        // 管理员守卫
+        async function ensureAdmin() {
+          try {
+            const cfgResp = await fetch('/api/config/defaults');
+            const cfg = await cfgResp.json();
+            const adminCfg = ((cfg||{}).defaults||{}).admin || {};
+            const adminUk = adminCfg.admin_uk || '';
+            const reviewerIds = Array.isArray(adminCfg.reviewer_user_ids) ? adminCfg.reviewer_user_ids.map(String) : [];
+            const sid = (()=>{ try { return localStorage.getItem('session_id'); } catch { return null; } })();
+            const uResp = await fetch('/user/info', { headers: sid ? { 'X-Session-Id': sid } : {} });
+            const u = await uResp.json();
+            const userUk = ((u||{}).user_info||{}).uk || ((u||{}).uk);
+            const isAdmin = (adminUk && String(userUk) === String(adminUk)) || (reviewerIds.includes(String(userUk)));
+            if (!userUk || !isAdmin) {
+              Global.notify('无权限访问管理后台，请使用管理员账号登录', 'error');
+              window.location.href = '/login';
+              return false;
+            }
+            return true;
+          } catch (e) {
+            Global.notify('无法验证管理员权限，请重新登录', 'error');
+            window.location.href = '/login';
+            return false;
+          }
+        }
+        ensureAdmin().then(ok => { if (!ok) return; }).catch(() => {});
+
         // 上架审核功能
         const selReviewStatus = document.getElementById('sel-review-status');
         const btnListingsRefresh = document.getElementById('btn-listings-refresh');
@@ -2689,11 +2717,34 @@
         const btnReviewReject = document.getElementById('btn-review-reject');
 
         let currentListingId = null;
+        let currentAdminId = null;
+
+        // 加载当前登录账号以自动填充审核员ID（带会话头）
+        (async function loadCurrentAdmin(){
+          try {
+            const sid = (()=>{ try { return localStorage.getItem('session_id'); } catch { return null; } })();
+            const res = await fetch('/oauth/session/latest', { headers: sid ? { 'X-Session-Id': sid } : {} });
+            const data = await res.json();
+            if (res.ok && data && data.status === 'success' && data.user_id) {
+              currentAdminId = data.user_id;
+              if (inpReviewerId && !inpReviewerId.value) {
+                inpReviewerId.value = currentAdminId;
+              }
+            } else {
+              // 未登录则提示并跳转登录
+              Global.notify('请先登录以执行审核操作', 'error');
+              setTimeout(()=>{ window.location.href = '/login'; }, 800);
+            }
+          } catch (_) {
+            Global.notify('无法获取登录状态，请重试', 'error');
+          }
+        })();
 
         // 加载审核队列
         async function loadReviewListings(status = 'pending') {
           try {
-            const res = await fetch(`/api/listings/review?status=${status}&limit=50`);
+            const sid = (()=>{ try { return localStorage.getItem('session_id'); } catch { return null; } })();
+            const res = await fetch(`/api/listings/review?status=${status}&limit=50`, { headers: sid ? { 'X-Session-Id': sid } : {} });
             const data = await res.json();
             
             if (res.ok) {
@@ -2748,7 +2799,8 @@
         async function selectListing(listingId) {
           currentListingId = listingId;
           try {
-            const res = await fetch(`/api/listings/${listingId}`);
+            const sid = (()=>{ try { return localStorage.getItem('session_id'); } catch { return null; } })();
+            const res = await fetch(`/api/listings/${listingId}`, { headers: sid ? { 'X-Session-Id': sid } : {} });
             const data = await res.json();
             
             if (res.ok) {
@@ -2761,6 +2813,9 @@
             Global.notify(`加载商品详情失败: ${error.message}`, 'error');
           }
         }
+
+        // 使列表项中的 onclick="selectListing(id)" 可用
+        window.selectListing = selectListing;
 
         // 显示商品详情
         function displayListingDetail(listing) {
@@ -2840,17 +2895,15 @@
           }
 
           const remark = inpReviewRemark.value.trim();
-          const reviewerId = inpReviewerId.value.trim();
-
-          if (!reviewerId) {
-            Global.notify('请输入审核员ID', 'error');
-            return;
-          }
+          let reviewerId = inpReviewerId.value.trim();
+          if (!reviewerId) reviewerId = currentAdminId || '';
+          if (!reviewerId) { Global.notify('请先登录以执行审核操作', 'error'); window.location.href='/login'; return; }
 
           try {
+            const sid = (()=>{ try { return localStorage.getItem('session_id'); } catch { return null; } })();
             const res = await fetch(`/api/listings/${currentListingId}/review`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: Object.assign({ 'Content-Type': 'application/json' }, (sid ? { 'X-Session-Id': sid } : {})),
               body: JSON.stringify({
                 status: status,
                 remark: remark,

@@ -99,17 +99,29 @@
         await getCurrentUser();
         bindEvents();
         loadTabContent(currentTab);
+        // 启动通知轮询更新徽标（若该页后续加徽标，可直接取 count）
+        try {
+          Global.NotificationPoller.startPolling(()=>{});
+        } catch(_) {}
       }
 
       // 获取当前用户
       async function getCurrentUser() {
         try {
+          // 优先本地缓存
+          try {
+            const cached = Global.SessionManager.getStoredUserInfo && Global.SessionManager.getStoredUserInfo();
+            if (cached && cached.user_id) {
+              currentBuyerId = cached.user_id;
+            }
+          } catch (_) {}
           const response = await fetch('/oauth/session/latest');
           const data = await response.json();
           
           if (data.status === 'success' && data.user_id) {
             currentBuyerId = data.user_id;
             try { if (data.session && data.session.session_id) localStorage.setItem('session_id', data.session.session_id); } catch {}
+            try { localStorage.setItem('user_info', JSON.stringify(data)); } catch {}
             console.log('当前买家ID:', currentBuyerId);
           } else {
             window.location.href = '/login';

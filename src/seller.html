@@ -205,6 +205,7 @@
       // 全局变量
       let currentSellerId = null;
       let currentTab = 'listings';
+      let availableBalanceCents = 0; // 缓存可用余额（分）
 
       function getSessionId(){
         try { return localStorage.getItem('session_id'); } catch { return null; }
@@ -227,11 +228,30 @@
         
         // 加载未读通知数量
         loadUnreadCount();
+        try {
+          Global.NotificationPoller.startPolling((count)=>{
+            const badge = document.getElementById('unread-count');
+            if (!badge) return;
+            if (count > 0) {
+              badge.textContent = count;
+              badge.classList.remove('hidden');
+            } else {
+              badge.classList.add('hidden');
+            }
+          });
+        } catch(_) {}
       }
 
       // 获取当前用户
       async function getCurrentUser() {
         try {
+          // 优先使用缓存
+          try {
+            const cached = Global.SessionManager.getStoredUserInfo && Global.SessionManager.getStoredUserInfo();
+            if (cached && cached.user_id) {
+              currentSellerId = cached.user_id;
+            }
+          } catch (_) {}
           const response = await fetch('/oauth/session/latest');
           const data = await response.json();
           
@@ -240,6 +260,7 @@
             if (data.session && data.session.session_id) {
               try { localStorage.setItem('session_id', data.session.session_id); } catch {}
             }
+            try { localStorage.setItem('user_info', JSON.stringify(data)); } catch {}
             console.log('当前用户ID:', currentSellerId);
           } else {
             // 如果没有登录，重定向到登录页
@@ -419,6 +440,14 @@
           
           if (data.status === 'success') {
             const wallet = data.wallet;
+            // 缓存可用余额（分）
+            if (wallet) {
+              if (typeof wallet.balance_cents === 'number') {
+                availableBalanceCents = wallet.balance_cents;
+              } else if (typeof wallet.balance_yuan === 'number') {
+                availableBalanceCents = Math.round(wallet.balance_yuan * 100);
+              }
+            }
             
             // 更新钱包总览
             const overviewContainer = document.getElementById('wallet-overview');
@@ -537,6 +566,15 @@
           return;
         }
 
+        // 前置余额校验（分）
+        const inputCents = Math.round(amount * 100);
+        if (typeof availableBalanceCents === 'number' && availableBalanceCents >= 0) {
+          if (inputCents > availableBalanceCents) {
+            Global.notify('提现金额不能超过可用余额', 'error');
+            return;
+          }
+        }
+
         try {
           const response = await fetch('/api/payouts', {
             method: 'POST',
@@ -563,7 +601,8 @@
             // 切换到提现记录标签
             switchTab('payouts');
           } else {
-            Global.notify('提现申请失败: ' + data.message, 'error');
+            Global.notify(data.message || '提现申请失败', 'error');
+            console.error('payout error resp:', data);
           }
         } catch (error) {
           Global.notify('提现申请失败: ' + error.message, 'error');

@@ -280,9 +280,20 @@
 
   // 用户会话管理
   Global.SessionManager = {
+    persistSession(session){
+      try{
+        if(session && session.session && session.session.session_id){
+          localStorage.setItem('session_id', session.session.session_id);
+        }
+        if(session){
+          localStorage.setItem('user_info', JSON.stringify(session));
+        }
+      }catch(_){ }
+    },
     async getCurrentSession() {
       try {
         const response = await fetchJson('/oauth/session/latest');
+        try{ Global.SessionManager.persistSession(response); }catch(_){ }
         return response;
       } catch (error) {
         console.error('获取会话信息失败:', error);

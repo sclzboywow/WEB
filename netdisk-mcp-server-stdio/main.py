@@ -11,7 +11,7 @@ import logging
 from typing import Optional
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
 from fastapi import Body
 from dotenv import load_dotenv
 
@@ -273,6 +273,10 @@ async def get_config_defaults():
                     "copy": {"src": copy_src, "dst": copy_dst},
                     "move": {"src": move_src, "dst": move_dst},
                     "delete": {"src": delete_dir}
+                },
+                "admin": {
+                    "admin_uk": _val('ADMIN_UK', ''),
+                    "reviewer_user_ids": [u.strip() for u in (_val('REVIEWER_USER_IDS', '') or '').split(',') if u.strip()]
                 }
             }
         }
@@ -601,7 +605,8 @@ if compat_router:
 # 根路由
 @app.get("/")
 async def root():
-    return {"message": "MCP Server is running", "version": "2.0.0"}
+    # 默认跳转到登录页面
+    return RedirectResponse(url="/login", status_code=302)
 
 # 健康检查路由
 @app.get("/health")
