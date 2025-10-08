@@ -20,7 +20,7 @@ from services.wallet_service import (
 
 router = APIRouter(prefix="/api", tags=["Wallet"])
 
-# 卖家订单列表
+# 卖家订单列表（为避免与 /api/orders/{order_id} 冲突，提供别名 /api/seller/orders）
 @router.get("/orders/seller")
 async def api_orders_seller(status: Optional[str] = Query(None),
                            limit: int = Query(20, ge=1, le=200),
@@ -39,7 +39,7 @@ async def api_orders_seller(status: Optional[str] = Query(None),
             where_clause += " AND status = ?"
             params.append(status)
         
-        cursor.execute(f'''
+        cursor.execute(f'''\
             SELECT id, order_no, buyer_id, total_amount_cents, platform_fee_cents,
                    seller_amount_cents, currency, status, payment_status,
                    created_at, updated_at, paid_at, delivered_at, completed_at
@@ -74,7 +74,7 @@ async def api_orders_seller(status: Optional[str] = Query(None),
             })
         
         # 获取总数
-        cursor.execute(f'''
+        cursor.execute(f'''\
             SELECT COUNT(*) FROM orders {where_clause}
         ''', params)
         total = cursor.fetchone()[0]
@@ -89,6 +89,14 @@ async def api_orders_seller(status: Optional[str] = Query(None),
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
     finally:
         conn.close()
+
+@router.get("/seller/orders")
+async def api_orders_seller_alias(status: Optional[str] = Query(None),
+                                  limit: int = Query(20, ge=1, le=200),
+                                  offset: int = Query(0, ge=0),
+                                  user: Dict[str, Any] = Depends(get_current_user)):
+    """别名：避免与 /api/orders/{order_id} 动态路由冲突"""
+    return await api_orders_seller(status=status, limit=limit, offset=offset, user=user)
 
 # 钱包信息
 @router.get("/wallet/me")
@@ -131,7 +139,7 @@ async def api_payouts_mine(status: Optional[str] = Query(None), user: Dict[str, 
             where_clause += " AND status = ?"
             params.append(status)
         
-        cursor.execute(f'''
+        cursor.execute(f'''\
             SELECT id, amount_cents, status, method, account_info, remark,
                    created_at, processed_at
             FROM payout_requests
@@ -187,7 +195,7 @@ async def api_payouts_list(status: Optional[str] = Query(None),
             where_clause = "WHERE status = ?"
             params.append(status)
         
-        cursor.execute(f'''
+        cursor.execute(f'''\
             SELECT pr.id, pr.user_id, pr.amount_cents, pr.status, pr.method, 
                    pr.account_info, pr.remark, pr.created_at, pr.processed_at,
                    u.display_name
@@ -217,7 +225,7 @@ async def api_payouts_list(status: Optional[str] = Query(None),
             })
         
         # 获取总数
-        cursor.execute(f'''
+        cursor.execute(f'''\
             SELECT COUNT(*) FROM payout_requests {where_clause}
         ''', params)
         total = cursor.fetchone()[0]

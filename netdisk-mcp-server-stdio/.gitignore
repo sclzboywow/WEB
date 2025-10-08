@@ -1,0 +1,29 @@
+# Ignore environment files and secrets
+.env
+.env.*
+!.env.example
+!.env.template
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Local DB/logs
+*.db
+*.sqlite3
+server.log
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
+
+# Test artifacts
+*.pytest_cache/
+.coverage
+
+# Local user info
+user_info.json
+user_info_new.json
+auth_result.json

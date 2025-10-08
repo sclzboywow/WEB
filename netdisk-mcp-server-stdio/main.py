@@ -73,6 +73,33 @@ if os.path.exists(src_dir):
     # 挂载整个src目录，提供HTML页面访问
     app.mount("/src", StaticFiles(directory=src_dir), name="src")
 
+# 提前注册特定路径，避免被动态路径拦截
+try:
+    # 显式代理 /api/listings/public，确保优先级高于 /api/listings/{listing_id}
+    from api.listings import api_listings_public as _api_listings_public
+
+    @app.get("/api/listings/public")
+    async def public_listings_proxy(keyword: Optional[str] = None,
+                                    listing_type: Optional[str] = None,
+                                    limit: int = 20,
+                                    offset: int = 0):
+        return await _api_listings_public(keyword, listing_type, limit, offset)
+except Exception:
+    # listings 模块不可用时忽略
+    pass
+
+# 站点图标（favicon）
+@app.get("/favicon.ico")
+async def favicon():
+    """返回站点 favicon，如果存在于 src 目录"""
+    try:
+        icon_path = os.path.join(src_dir, "favicon.ico")
+        if os.path.exists(icon_path):
+            return FileResponse(icon_path)
+    except Exception:
+        pass
+    return JSONResponse({"detail": "favicon not found"}, status_code=404)
+
 # 导入并注册API路由
 from api.auth import router as auth_router
 from api.users import router as users_router

@@ -134,6 +134,72 @@ async def api_orders_mine(status: Optional[str] = Query(None), user: Dict[str, A
     finally:
         conn.close()
 
+@router.get("/seller")
+async def api_orders_seller(
+    status: Optional[str] = Query(None),
+    limit: int = Query(20, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    user: Dict[str, Any] = Depends(get_current_user)
+):
+    """获取卖家的订单列表（置于动态路由之前，避免被 /{order_id} 捕获）"""
+    db_path = init_sync_db()
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+
+    try:
+        where_clause = "WHERE seller_id = ?"
+        params: List[Any] = [user.get("user_id")]
+
+        if status:
+            where_clause += " AND status = ?"
+            params.append(status)
+
+        cursor.execute(f'''
+            SELECT id, order_no, buyer_id, total_amount_cents, platform_fee_cents,
+                   seller_amount_cents, currency, status, payment_status,
+                   created_at, updated_at, paid_at, delivered_at, completed_at
+            FROM orders
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ? OFFSET ?
+        ''', (*params, limit, offset))
+
+        rows = cursor.fetchall()
+        orders: List[Dict[str, Any]] = []
+
+        for row in rows:
+            orders.append({
+                "id": row[0],
+                "order_no": row[1],
+                "buyer_id": row[2],
+                "total_amount_cents": row[3],
+                "platform_fee_cents": row[4],
+                "seller_amount_cents": row[5],
+                "currency": row[6],
+                "status": row[7],
+                "payment_status": row[8],
+                "created_at": row[9],
+                "updated_at": row[10],
+                "paid_at": row[11],
+                "delivered_at": row[12],
+                "completed_at": row[13]
+            })
+
+        # 获取总数
+        cursor.execute(f'''SELECT COUNT(*) FROM orders {where_clause}''', params)
+        total = cursor.fetchone()[0]
+
+        return JSONResponse({
+            "status": "success",
+            "orders": orders,
+            "total": total
+        })
+
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+    finally:
+        conn.close()
+
 @router.get("/{order_id}")
 async def api_orders_detail(order_id: int):
     """获取订单详情"""

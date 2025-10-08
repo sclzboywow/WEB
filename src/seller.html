@@ -206,6 +206,14 @@
       let currentSellerId = null;
       let currentTab = 'listings';
 
+      function getSessionId(){
+        try { return localStorage.getItem('session_id'); } catch { return null; }
+      }
+      function withSessionHeaders(base){
+        const sid = getSessionId();
+        return sid ? Object.assign({}, base||{}, { 'X-Session-Id': sid }) : (base||{});
+      }
+
       // 初始化
       async function init() {
         // 获取当前用户ID（从OAuth状态或本地存储）
@@ -327,7 +335,7 @@
           const url = status ? `/api/listings/mine?status=${status}` : 
                               `/api/listings/mine`;
           
-          const response = await fetch(url);
+          const response = await fetch(url, { headers: withSessionHeaders() });
           const data = await response.json();
           
           const container = document.getElementById('listings-list');
@@ -359,16 +367,17 @@
         }
       }
 
-      // 加载订单列表
+      // 加载订单列表（卖家）
       async function loadOrders() {
         if (!currentSellerId) return;
 
         try {
           const status = document.getElementById('sel-order-status')?.value || '';
-          const url = status ? `/api/orders/seller?status=${status}` : 
-                              `/api/orders/seller`;
+          const base = '/api/orders/seller';
+          const qs = status ? `?status=${encodeURIComponent(status)}&limit=20&offset=0` : `?limit=20&offset=0`;
+          const url = `${base}${qs}`;
           
-          const response = await fetch(url);
+          const response = await fetch(url, { headers: withSessionHeaders() });
           const data = await response.json();
           
           const container = document.getElementById('orders-list');
@@ -405,7 +414,7 @@
         if (!currentSellerId) return;
 
         try {
-          const response = await fetch(`/api/wallet/me`);
+          const response = await fetch(`/api/wallet/me`, { headers: withSessionHeaders() });
           const data = await response.json();
           
           if (data.status === 'success') {
@@ -454,7 +463,7 @@
               
               logsContainer.innerHTML = rows;
             } else if (logsContainer) {
-              logsContainer.innerHTML = '<div class="text-sm text-gray-500 text-center py-4">暂无流水记录</div>';
+              logsContainer.innerHTML = '<div class="text-sm text-gray-500 text-center py-4">暂无流水记录</div>'; 
             }
           }
         } catch (error) {
@@ -471,7 +480,7 @@
           const url = status ? `/api/payouts/mine?status=${status}` : 
                               `/api/payouts/mine`;
           
-          const response = await fetch(url);
+          const response = await fetch(url, { headers: withSessionHeaders() });
           const data = await response.json();
           
           const container = document.getElementById('payouts-list');
@@ -531,7 +540,7 @@
         try {
           const response = await fetch('/api/payouts', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: withSessionHeaders({ 'Content-Type': 'application/json' }),
             body: JSON.stringify({
               amount_cents: Math.round(amount * 100),
               method: method,

@@ -4,20 +4,28 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>商品市场 - 数字商品交易平台</title>
-  <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    (function(){
+      function ensureTailwind(){
+        try {
+          var probe = document.createElement('div');
+          probe.className = 'hidden';
+          document.head.appendChild(probe);
+          var style = window.getComputedStyle(probe);
+          var ok = style && (style.display === 'none');
+          document.head.removeChild(probe);
+          if (!ok) {
+            var s = document.createElement('script');
+            s.src = 'https://cdn.tailwindcss.com';
+            document.head.appendChild(s);
+          }
+        } catch (_) {}
+      }
+      ensureTailwind();
+    })();
+  </script>
   <script src="/assets/js/common.js"></script>
-  <style>
-    .card { @apply bg-white rounded-lg shadow-sm border; }
-    .btn { @apply px-4 py-2 rounded text-sm font-medium transition-colors; }
-    .btn-primary { @apply bg-blue-600 text-white hover:bg-blue-700; }
-    .btn-success { @apply bg-green-600 text-white hover:bg-green-700; }
-    .btn-secondary { @apply bg-gray-600 text-white hover:bg-gray-700; }
-    .modal { @apply fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50; }
-    .modal-content { @apply bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto; }
-    .hidden { display: none !important; }
-    .tab-active { @apply bg-blue-600 text-white; }
-    .tab-inactive { @apply bg-gray-100 text-gray-700 hover:bg-gray-200; }
-  </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
   <div class="container mx-auto px-4 py-6">
@@ -389,11 +397,12 @@
         if (!currentBuyerId) return;
 
         try {
+          const sessionId = (()=>{ try { return localStorage.getItem('session_id'); } catch { return null; } })();
           const status = document.getElementById('sel-order-status')?.value || '';
           const url = status ? `/api/orders/mine?status=${status}` : 
                               `/api/orders/mine`;
           
-          const response = await fetch(url);
+          const response = await fetch(url, { headers: sessionId ? { 'X-Session-Id': sessionId } : {} });
           const data = await response.json();
           
           const container = document.getElementById('orders-list');
@@ -457,7 +466,8 @@
         if (!currentBuyerId) return;
 
         try {
-          const response = await fetch(`/api/purchases/mine`);
+          const sessionId = (()=>{ try { return localStorage.getItem('session_id'); } catch { return null; } })();
+          const response = await fetch(`/api/purchases/mine?buyer_id=${currentBuyerId}`, { headers: sessionId ? { 'X-Session-Id': sessionId } : {} });
           const data = await response.json();
           
           const container = document.getElementById('purchases-list');
@@ -948,9 +958,10 @@
       // 订单相关函数
       async function payOrder(orderId) {
         try {
+          const sessionId = (()=>{ try { return localStorage.getItem('session_id'); } catch { return null; } })();
           const response = await fetch(`/api/orders/${orderId}/pay`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: Object.assign({ 'Content-Type': 'application/json' }, (sessionId ? { 'X-Session-Id': sessionId } : {})),
             body: JSON.stringify({
               provider: 'alipay',
               payment_method: 'alipay'
@@ -972,7 +983,8 @@
 
       async function viewOrderDetail(orderId) {
         try {
-          const response = await fetch(`/api/orders/${orderId}`);
+          const sessionId = (()=>{ try { return localStorage.getItem('session_id'); } catch { return null; } })();
+          const response = await fetch(`/api/orders/${orderId}`, { headers: sessionId ? { 'X-Session-Id': sessionId } : {} });
           const data = await response.json();
 
           if (data.status === 'success') {
