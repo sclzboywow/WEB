@@ -440,11 +440,11 @@ async def api_listings_detail(listing_id: int, seller_id: Optional[str] = Query(
 
 @router.get("/files")
 async def api_listings_files(
-    keyword: Optional[str] = None,
-    listing_type: Optional[str] = None,
-    dir_path: Optional[str] = None,
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0)
+    limit: int = Query(12, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    keyword: Optional[str] = Query(None),
+    listing_type: Optional[str] = Query(None),
+    dir_path: Optional[str] = Query(None)
 ):
     """基于已上架商品的文件维度分页列表。用于商品市场直接展示同步文件。
 
@@ -472,14 +472,14 @@ async def api_listings_files(
             params.append(f"{dir_path}%")
 
         cursor.execute(f'''
-            SELECT lf.id as file_id, lf.listing_id, lf.file_name, lf.file_path, lf.file_size,
-                   l.price_cents, l.listing_type, l.published_at,
+            SELECT lf.id as file_id, lf.listing_id, lf.file_name, lf.file_path, lf.file_size, lf.file_md5,
+                   l.price_cents, l.listing_type, COALESCE(l.published_at, l.created_at) as pub_at,
                    u.user_id, u.display_name, u.avatar_url, l.title
             FROM listing_files lf
             INNER JOIN listings l ON lf.listing_id = l.id
             LEFT JOIN users u ON l.seller_id = u.user_id
             {where_clause}
-            ORDER BY l.published_at DESC, lf.id DESC
+            ORDER BY COALESCE(l.published_at, l.created_at) DESC, lf.id DESC
             LIMIT ? OFFSET ?
         ''', (*params, limit, offset))
 
@@ -492,11 +492,12 @@ async def api_listings_files(
                 "file_name": row[2],
                 "file_path": row[3],
                 "file_size": row[4],
-                "price_cents": row[5],
-                "listing_type": row[6],
-                "published_at": row[7],
-                "seller": {"user_id": row[8], "display_name": row[9], "avatar_url": row[10]},
-                "title": row[11] or row[2],
+                "file_md5": row[5],
+                "price_cents": row[6],
+                "listing_type": row[7],
+                "published_at": row[8],
+                "seller": {"user_id": row[9], "display_name": row[10], "avatar_url": row[11]},
+                "title": row[12] or row[2],
                 "description": row[2]
             })
 
@@ -591,11 +592,11 @@ async def api_listings_public(keyword: Optional[str] = None,
 
 @router.get("/files")
 async def api_listings_files(
-    keyword: Optional[str] = None,
-    listing_type: Optional[str] = None,
-    dir_path: Optional[str] = None,
-    limit: int = Query(20, ge=1, le=100),
-    offset: int = Query(0, ge=0)
+    limit: int = Query(12, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    keyword: Optional[str] = Query(None),
+    listing_type: Optional[str] = Query(None),
+    dir_path: Optional[str] = Query(None)
 ):
     """基于已上架商品的文件维度分页列表。用于商品市场直接展示同步文件。
 
