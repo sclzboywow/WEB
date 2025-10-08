@@ -658,17 +658,17 @@
             
             <div class="mb-3">
               <div class="flex items-center justify-between text-sm text-gray-500 mb-1">
-                <span>卖家: ${listing.seller_name || listing.seller_id}</span>
-                <span>${listing.file_count} 个文件</span>
+                <span>卖家: ${getSellerName(listing)}</span>
+                <span>${getFileCountText(listing)}</span>
               </div>
               <div class="text-lg font-bold text-green-600">¥${(listing.price_cents / 100).toFixed(2)}</div>
             </div>
             
             <div class="flex gap-2">
-              <button class="btn btn-primary flex-1" onclick="showDetail(${listing.id})">
+              <button class="btn btn-primary flex-1" onclick="showDetail(${listing.listing_id || listing.id})">
                 查看详情
               </button>
-              <button class="btn btn-success flex-1" onclick="buyNow(${listing.id})">
+              <button class="btn btn-success flex-1" onclick="buyNow(${listing.listing_id || listing.id})">
                 立即购买
               </button>
             </div>
@@ -1240,6 +1240,26 @@
           '图纸': '图纸'
         };
         return types[type] || type;
+      }
+
+      function getSellerName(listing){
+        try{
+          if (listing.seller && (listing.seller.display_name || listing.seller.user_id)) {
+            return listing.seller.display_name || listing.seller.user_id;
+          }
+          if (listing.seller_name || listing.seller_id) {
+            return listing.seller_name || listing.seller_id;
+          }
+        }catch(_){}
+        return '';
+      }
+
+      function getFileCountText(listing){
+        try{
+          if (typeof listing.file_count === 'number') return `${listing.file_count} 个文件`;
+          if (Array.isArray(listing.files)) return `${listing.files.length} 个文件`;
+        }catch(_){ }
+        return '';
       }
 
       function formatFileSize(bytes) {
