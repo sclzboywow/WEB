@@ -13,7 +13,7 @@ from typing import Dict, Any, List, Optional
 
 from services.db import init_sync_db
 from api.deps import get_current_user
-from services.payment_service import create_alipay_page_pay
+from services.payment_service import create_alipay_page_pay, create_alipay_wap_pay
 from services.order_service import create_order, create_payment_record, apply_refund, review_refund
 
 router = APIRouter(prefix="/api/orders", tags=["Orders"])
@@ -335,10 +335,14 @@ async def api_orders_pay(order_id: int, payload: Dict[str, Any], user: Dict[str,
         payment_id = resp["payment_id"]
         # 使用本地生成的 transaction_id，避免返回结构缺失导致 KeyError
         
-        # 生成支付宝网页支付链接（无回调，前端轮询）
+        # 根据 payment_method 选择支付形态
         subject = f"订单{order_id}"
         amount_yuan = max(0.01, round(amount_cents / 100.0, 2))
-        pay_res = create_alipay_page_pay(subject=subject, total_amount=amount_yuan, out_trade_no=transaction_id)
+        payment_method = (payload.get('payment_method') or 'alipay').lower()
+        if provider == 'alipay' and payment_method in ('alipay_wap', 'wap'):
+            pay_res = create_alipay_wap_pay(subject=subject, total_amount=amount_yuan, out_trade_no=transaction_id)
+        else:
+            pay_res = create_alipay_page_pay(subject=subject, total_amount=amount_yuan, out_trade_no=transaction_id)
         if pay_res.get('status') != 'success':
             return JSONResponse({"status": "error", "message": pay_res.get('message', 'failed to create pay url')}, status_code=500)
         return JSONResponse({

@@ -308,6 +308,58 @@ def create_alipay_page_pay(subject: str, total_amount: float, out_trade_no: str)
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+def create_alipay_wap_pay(subject: str, total_amount: float, out_trade_no: str) -> Dict[str, Any]:
+    """生成 WAP 支付链接（QUICK_WAP_WAY），适配移动端 H5 唤起 App。
+
+    返回: { status, pay_url, gateway }
+    """
+    try:
+        cfg = load_platform_payment_config('alipay') or {}
+        private_key = (cfg.get('private_key') or '').strip()
+        if not private_key:
+            return {"status": "error", "message": "missing private key"}
+
+        app_id = os.getenv('ALIPAY_APP_ID') or ''
+        if not app_id:
+            return {"status": "error", "message": "missing ALIPAY_APP_ID"}
+        gateway = os.getenv('ALIPAY_GATEWAY') or 'https://openapi.alipay.com/gateway.do'
+
+        common = {
+            'app_id': app_id,
+            'method': 'alipay.trade.wap.pay',
+            'format': 'JSON',
+            'charset': 'utf-8',
+            'sign_type': 'RSA2',
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'version': '1.0',
+        }
+        ret = (os.getenv('PAY_RETURN_URL') or '').strip()
+        noti = (os.getenv('PAY_NOTIFY_URL') or '').strip()
+        quit_url = (os.getenv('PAY_QUIT_URL') or ret or '').strip()
+        if ret:
+            common['return_url'] = ret
+        if noti:
+            common['notify_url'] = noti
+        biz_content = {
+            'out_trade_no': out_trade_no,
+            'product_code': 'QUICK_WAP_WAY',
+            'total_amount': str(round(float(total_amount), 2)),
+            'subject': subject,
+        }
+        if quit_url:
+            biz_content['quit_url'] = quit_url
+
+        params = dict(common)
+        params['biz_content'] = json.dumps(biz_content, ensure_ascii=False, separators=(',', ':'))
+        unsigned = _ordered_query(params)
+        sign = _rsa2_sign(unsigned, private_key)
+        params['sign'] = sign
+        query = urlencode({k: params[k] for k in params}, quote_via=quote_plus)
+        pay_url = f"{gateway}?{query}"
+        return {"status": "success", "pay_url": pay_url, "gateway": gateway}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 def query_alipay_trade(out_trade_no: str) -> Dict[str, Any]:
     """服务端查询交易结果（alipay.trade.query）。返回 {status, paid, raw}。"""
     try:
