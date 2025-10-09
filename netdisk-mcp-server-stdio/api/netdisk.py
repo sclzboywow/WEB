@@ -269,20 +269,26 @@ def _request_pan_api(base: str, params: Dict[str, Any]) -> Dict[str, Any]:
     except Exception as e:
         return {"status": "error", "errno": -3, "error_code": "exception", "message": str(e)}
 
+from contextlib import contextmanager
+
+@contextmanager
 def configure_session():
-    """配置带有重试机制的会话"""
+    """配置带有重试机制的会话（上下文管理器）"""
     requests, Retry, HTTPAdapter = get_requests_session()
     session = requests.Session()
-    retry_strategy = Retry(
-        total=MAX_RETRIES,
-        backoff_factor=RETRY_BACKOFF,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE", "POST"]
-    )
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    return session
+    try:
+        retry_strategy = Retry(
+            total=MAX_RETRIES,
+            backoff_factor=RETRY_BACKOFF,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE", "POST"]
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        yield session
+    finally:
+        session.close()
 
 def _normalize_dir_path(path: str) -> str:
     if not isinstance(path, str) or not path.strip():
@@ -997,105 +1003,105 @@ async def list_multimedia_files(
         if not can_call:
             raise HTTPException(status_code=429, detail=error_msg)
         
-        session = configure_session()
-        base_url = 'https://pan.baidu.com/rest/2.0/xpan/file'
-        headers = {'User-Agent': 'pan.baidu.com'}
+        with configure_session() as session:
+            base_url = 'https://pan.baidu.com/rest/2.0/xpan/file'
+            headers = {'User-Agent': 'pan.baidu.com'}
 
-        # 根据类型选择专用接口
-        use_method = None
-        params: Dict[str, Any] = {
-            'web': 1,
-        }
+            # 根据类型选择专用接口
+            use_method = None
+            params: Dict[str, Any] = {
+                'web': 1,
+            }
 
-        if category == 3:
-            use_method = 'imagelist'
-            params.update({
-                'method': use_method,
-                'parent_path': path,
-                'recursion': recursion,
-                'start': start,
-                'limit': limit,
-                'order': order,
-                'desc': desc,
-            })
-        elif category == 1:
-            use_method = 'videolist'
-            params.update({
-                'method': use_method,
-                'parent_path': path,
-                'recursion': recursion,
-                'start': start,
-                'limit': limit,
-                'order': order,
-                'desc': desc,
-            })
-        elif category == 4:
-            use_method = 'doclist'
-            params.update({
-                'method': use_method,
-                'parent_path': path,
-                'recursion': recursion,
-                'start': start,
-                'limit': limit,
-                'order': order,
-                'desc': desc,
-            })
-        elif category == 2:
-            use_method = 'audiolist'
-            params.update({
-                'method': use_method,
-                'parent_path': path,
-                'recursion': recursion,
-                'start': start,
-                'limit': limit,
-                'order': order,
-                'desc': desc,
-            })
-        elif category == 7:
-            use_method = 'btlist'
-            params.update({
-                'method': use_method,
-                'parent_path': path,
-                'recursion': recursion,
-                'start': start,
-                'limit': limit,
-                'order': order,
-                'desc': desc,
-            })
-        else:
-            use_method = 'listall'
-            params.update({
-                'method': use_method,
-                'path': path,
-                'recursion': recursion,
-                'start': start,
-                'limit': limit,
-                'order': order,
-                'desc': desc,
-            })
-            if category is not None:
-                params['category'] = category
-
-        access_token = _ensure_access_token()
-        # 1) SDK 优先（仅当使用 listall/imagelist/videolist/doclist/audiolist/btlist 这些 SDK 暴露的方法时）
-        try:
-            sdks = _get_sdk_clients()
-            if use_method == 'imagelist':
-                page_num = int(start // max(1, limit)) + 1
-                response = sdks['fileinfo'].xpanfileimagelist(access_token=access_token, parent_path=path, recursion=str(recursion), page=page_num, num=limit, order=order, desc=str(desc), web='1')
-            elif use_method == 'videolist':
-                # fileinfo_api 未必包含 videolist，若无则走 HTTP
-                raise Exception('no sdk videolist')
-            elif use_method == 'doclist':
-                page_num = int(start // max(1, limit)) + 1
-                response = sdks['fileinfo'].xpanfiledoclist(access_token=access_token, parent_path=path, recursion=str(recursion), page=page_num, num=limit, order=order, desc=str(desc), web='1')
+            if category == 3:
+                use_method = 'imagelist'
+                params.update({
+                    'method': use_method,
+                    'parent_path': path,
+                    'recursion': recursion,
+                    'start': start,
+                    'limit': limit,
+                    'order': order,
+                    'desc': desc,
+                })
+            elif category == 1:
+                use_method = 'videolist'
+                params.update({
+                    'method': use_method,
+                    'parent_path': path,
+                    'recursion': recursion,
+                    'start': start,
+                    'limit': limit,
+                    'order': order,
+                    'desc': desc,
+                })
+            elif category == 4:
+                use_method = 'doclist'
+                params.update({
+                    'method': use_method,
+                    'parent_path': path,
+                    'recursion': recursion,
+                    'start': start,
+                    'limit': limit,
+                    'order': order,
+                    'desc': desc,
+                })
+            elif category == 2:
+                use_method = 'audiolist'
+                params.update({
+                    'method': use_method,
+                    'parent_path': path,
+                    'recursion': recursion,
+                    'start': start,
+                    'limit': limit,
+                    'order': order,
+                    'desc': desc,
+                })
+            elif category == 7:
+                use_method = 'btlist'
+                params.update({
+                    'method': use_method,
+                    'parent_path': path,
+                    'recursion': recursion,
+                    'start': start,
+                    'limit': limit,
+                    'order': order,
+                    'desc': desc,
+                })
             else:
-                # listall 也常用 HTTP 参数
-                raise Exception('prefer http for listall')
-        except Exception:
-            r = session.get(base_url, params=params, timeout=TIMEOUT, headers=headers)
-            r.raise_for_status()
-            response = r.json()
+                use_method = 'listall'
+                params.update({
+                    'method': use_method,
+                    'path': path,
+                    'recursion': recursion,
+                    'start': start,
+                    'limit': limit,
+                    'order': order,
+                    'desc': desc,
+                })
+                if category is not None:
+                    params['category'] = category
+
+            access_token = _ensure_access_token()
+            # 1) SDK 优先（仅当使用 listall/imagelist/videolist/doclist/audiolist/btlist 这些 SDK 暴露的方法时）
+            try:
+                sdks = _get_sdk_clients()
+                if use_method == 'imagelist':
+                    page_num = int(start // max(1, limit)) + 1
+                    response = sdks['fileinfo'].xpanfileimagelist(access_token=access_token, parent_path=path, recursion=str(recursion), page=page_num, num=limit, order=order, desc=str(desc), web='1')
+                elif use_method == 'videolist':
+                    # fileinfo_api 未必包含 videolist，若无则走 HTTP
+                    raise Exception('no sdk videolist')
+                elif use_method == 'doclist':
+                    page_num = int(start // max(1, limit)) + 1
+                    response = sdks['fileinfo'].xpanfiledoclist(access_token=access_token, parent_path=path, recursion=str(recursion), page=page_num, num=limit, order=order, desc=str(desc), web='1')
+                else:
+                    # listall 也常用 HTTP 参数
+                    raise Exception('prefer http for listall')
+            except Exception:
+                r = session.get(base_url, params=params, timeout=TIMEOUT, headers=headers)
+                r.raise_for_status()
+                response = r.json()
         
         if 'errno' in response and response['errno'] != 0:
             msg = response.get('error_msg') or response.get('errmsg') or str(response['errno'])

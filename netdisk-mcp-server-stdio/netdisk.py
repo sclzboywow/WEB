@@ -210,19 +210,25 @@ def record_api_call(api_type: str):
     """记录API调用"""
     rate_limiter.record_call(api_type)
 
+from contextlib import contextmanager
+
+@contextmanager
 def configure_session():
-    """配置带有重试机制的会话"""
+    """配置带有重试机制的会话（上下文管理器）"""
     session = requests.Session()
-    retry_strategy = Retry(
-        total=MAX_RETRIES,
-        backoff_factor=RETRY_BACKOFF,
-        status_forcelist=[429, 500, 502, 503, 504],
-        allowed_methods=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE", "POST"]
-    )
-    adapter = HTTPAdapter(max_retries=retry_strategy)
-    session.mount("https://", adapter)
-    session.mount("http://", adapter)
-    return session
+    try:
+        retry_strategy = Retry(
+            total=MAX_RETRIES,
+            backoff_factor=RETRY_BACKOFF,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE", "POST"]
+        )
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("https://", adapter)
+        session.mount("http://", adapter)
+        yield session
+    finally:
+        session.close()
 
 @mcp.tool()
 def upload_file(local_file_path: str, remote_path: str = None) -> Dict[str, Any]:
@@ -689,61 +695,60 @@ def download_file(remote_path: str, local_path: str = None, progress_cb=None) ->
         print(f"保存到: {local_path}")
         
         # 下载文件（分块读取，上报进度）
-        response = requests.get(download_url, stream=True, timeout=TIMEOUT)
-        
-        if response.status_code == 200:
-            # 获取文件大小
-            total_size = int(response.headers.get('content-length', 0))
+        with requests.get(download_url, stream=True, timeout=TIMEOUT) as response:
+            if response.status_code == 200:
+                # 获取文件大小
+                total_size = int(response.headers.get('content-length', 0))
 
-            # 写入文件
-            with open(local_path, 'wb') as f:
-                downloaded = 0
-                for chunk in response.iter_content(chunk_size=256*1024):
-                    if not chunk:
-                        continue
-                    f.write(chunk)
-                    downloaded += len(chunk)
-                    if total_size > 0:
-                        progress = (downloaded / total_size) * 100
-                        # 打印与回调
-                        try:
-                            print(f"\r下载进度: {progress:.1f}%", end='', flush=True)
-                        except Exception:
-                            pass
-                        if callable(progress_cb):
+                # 写入文件
+                with open(local_path, 'wb') as f:
+                    downloaded = 0
+                    for chunk in response.iter_content(chunk_size=256*1024):
+                        if not chunk:
+                            continue
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            progress = (downloaded / total_size) * 100
+                            # 打印与回调
                             try:
-                                progress_cb(progress)
+                                print(f"\r下载进度: {progress:.1f}%", end='', flush=True)
                             except Exception:
                                 pass
-            
-            try:
-                print(f"\n下载完成!")
-            except Exception:
-                pass
-            
-            # 获取文件信息
-            file_size = os.path.getsize(local_path)
-            
-            result = {
-                "status": "success",
-                "message": "文件下载成功",
-                "remote_path": remote_path,
-                "local_path": local_path,
-                "file_size": file_size,
-                "downloaded_size": downloaded
-            }
-            if callable(progress_cb):
+                            if callable(progress_cb):
+                                try:
+                                    progress_cb(progress)
+                                except Exception:
+                                    pass
+                
                 try:
-                    progress_cb(100.0)
+                    print(f"\n下载完成!")
                 except Exception:
                     pass
-            return result
-        else:
-            return {
-                "status": "error", 
-                "message": f"下载失败，HTTP状态码: {response.status_code}",
-                "response": response.text[:200]
-            }
+                
+                # 获取文件信息
+                file_size = os.path.getsize(local_path)
+                
+                result = {
+                    "status": "success",
+                    "message": "文件下载成功",
+                    "remote_path": remote_path,
+                    "local_path": local_path,
+                    "file_size": file_size,
+                    "downloaded_size": downloaded
+                }
+                if callable(progress_cb):
+                    try:
+                        progress_cb(100.0)
+                    except Exception:
+                        pass
+                return result
+            else:
+                return {
+                    "status": "error", 
+                    "message": f"下载失败，HTTP状态码: {response.status_code}",
+                    "response": response.text[:200]
+                }
             
     except Exception as e:
         return {"status": "error", "message": f"下载文件时发生错误: {str(e)}"}
@@ -1360,142 +1365,142 @@ def list_multimedia_files(path: str = "/", recursion: int = 1, start: int = 0, l
     - 多媒体文件列表
     """
     try:
-        session = configure_session()
-        base_url = 'https://pan.baidu.com/rest/2.0/xpan/file'
-        headers = {'User-Agent': 'pan.baidu.com'}
+        with configure_session() as session:
+            base_url = 'https://pan.baidu.com/rest/2.0/xpan/file'
+            headers = {'User-Agent': 'pan.baidu.com'}
 
-        # Route to dedicated endpoints when possible per official docs:
-        # - imagelist (category=3) requires parent_path and returns info array including thumbs when web=1
-        # - videolist (category=1), doclist (category=4) similarly
-        use_method = None
-        params: Dict[str, Any] = {
-            'access_token': access_token,
-            'web': web,
-        }
-
-        if category == 3:
-            use_method = 'imagelist'
-            params.update({
-                'method': use_method,
-                'parent_path': path,
-                'recursion': recursion,
-                'start': start,
-                'limit': limit,
-                'order': order,
-                'desc': desc,
-            })
-        elif category == 1:
-            use_method = 'videolist'
-            params.update({
-                'method': use_method,
-                'parent_path': path,
-                'recursion': recursion,
-                'start': start,
-                'limit': limit,
-                'order': order,
-                'desc': desc,
-            })
-        elif category == 4:
-            use_method = 'doclist'
-            params.update({
-                'method': use_method,
-                'parent_path': path,
-                'recursion': recursion,
-                'start': start,
-                'limit': limit,
-                'order': order,
-                'desc': desc,
-            })
-        elif category == 2:
-            # 音频
-            use_method = 'audiolist'
-            params.update({
-                'method': use_method,
-                'parent_path': path,
-                'recursion': recursion,
-                'start': start,
-                'limit': limit,
-                'order': order,
-                'desc': desc,
-            })
-        elif category == 7:
-            # BT/种子
-            use_method = 'btlist'
-            params.update({
-                'method': use_method,
-                'parent_path': path,
-                'recursion': recursion,
-                'start': start,
-                'limit': limit,
-                'order': order,
-                'desc': desc,
-            })
-        else:
-            # Fallback to listall + category filter for other types (audio/apps/other/bt)
-            use_method = 'listall'
-            params.update({
-                'method': use_method,
-                'path': path,
-                'recursion': recursion,
-                'start': start,
-                'limit': limit,
-                'order': order,
-                'desc': desc,
-            })
-            if category is not None:
-                params['category'] = category
-
-        r = session.get(base_url, params=params, timeout=TIMEOUT, headers=headers)
-        r.raise_for_status()
-        response = r.json()
-        if 'errno' in response and response['errno'] != 0:
-            return {"status": "error", "message": f"获取多媒体文件列表失败: {response['errno']}"}
-
-        # imagelist/videolist/doclist return array field name 'info'; listall returns 'list'
-        raw_items = response.get('info') if use_method in ('imagelist', 'videolist', 'doclist') else response.get('list')
-        files = []
-        for item in raw_items or []:
-            # 修复编码问题：UTF-8被GBK解码导致的乱码
-            def fix_encoding(text):
-                if not text or not isinstance(text, str):
-                    return text
-                try:
-                    # 尝试将乱码的UTF-8字符串重新编码为正确的UTF-8
-                    return text.encode('latin-1').decode('utf-8')
-                except (UnicodeEncodeError, UnicodeDecodeError):
-                    # 如果修复失败，返回原字符串
-                    return text
-            
-            file_info = {
-                "fs_id": item.get('fs_id', 0),
-                "path": fix_encoding(item.get('path', '')),
-                "server_filename": fix_encoding(item.get('server_filename', '')),
-                "size": item.get('size', 0),
-                "server_mtime": item.get('server_mtime', item.get('server_mtime', 0)),
-                "server_ctime": item.get('server_ctime', item.get('server_ctime', 0)),
-                "local_mtime": item.get('local_mtime', 0),
-                "local_ctime": item.get('local_ctime', 0),
-                "isdir": item.get('isdir', 0),
-                "category": item.get('category', 0),
-                "md5": item.get('md5', ''),
-                "thumbs": item.get('thumbs', {}),
-                "media_type": item.get('media_type', 0),
-                "width": item.get('width', 0),
-                "height": item.get('height', 0),
-                "duration": item.get('duration', 0)
+            # Route to dedicated endpoints when possible per official docs:
+            # - imagelist (category=3) requires parent_path and returns info array including thumbs when web=1
+            # - videolist (category=1), doclist (category=4) similarly
+            use_method = None
+            params: Dict[str, Any] = {
+                'access_token': access_token,
+                'web': web,
             }
-            files.append(file_info)
 
-        return {
-            "status": "success",
-            "message": "获取多媒体文件列表成功",
-            "path": path,
-            "total": len(files),
-            "files": files,
-            "has_more": response.get('has_more', False),
-            "routed_method": use_method,
-            "selected_category": category
-        }
+            if category == 3:
+                use_method = 'imagelist'
+                params.update({
+                    'method': use_method,
+                    'parent_path': path,
+                    'recursion': recursion,
+                    'start': start,
+                    'limit': limit,
+                    'order': order,
+                    'desc': desc,
+                })
+            elif category == 1:
+                use_method = 'videolist'
+                params.update({
+                    'method': use_method,
+                    'parent_path': path,
+                    'recursion': recursion,
+                    'start': start,
+                    'limit': limit,
+                    'order': order,
+                    'desc': desc,
+                })
+            elif category == 4:
+                use_method = 'doclist'
+                params.update({
+                    'method': use_method,
+                    'parent_path': path,
+                    'recursion': recursion,
+                    'start': start,
+                    'limit': limit,
+                    'order': order,
+                    'desc': desc,
+                })
+            elif category == 2:
+                # 音频
+                use_method = 'audiolist'
+                params.update({
+                    'method': use_method,
+                    'parent_path': path,
+                    'recursion': recursion,
+                    'start': start,
+                    'limit': limit,
+                    'order': order,
+                    'desc': desc,
+                })
+            elif category == 7:
+                # BT/种子
+                use_method = 'btlist'
+                params.update({
+                    'method': use_method,
+                    'parent_path': path,
+                    'recursion': recursion,
+                    'start': start,
+                    'limit': limit,
+                    'order': order,
+                    'desc': desc,
+                })
+            else:
+                # Fallback to listall + category filter for other types (audio/apps/other/bt)
+                use_method = 'listall'
+                params.update({
+                    'method': use_method,
+                    'path': path,
+                    'recursion': recursion,
+                    'start': start,
+                    'limit': limit,
+                    'order': order,
+                    'desc': desc,
+                })
+                if category is not None:
+                    params['category'] = category
+
+            r = session.get(base_url, params=params, timeout=TIMEOUT, headers=headers)
+            r.raise_for_status()
+            response = r.json()
+            if 'errno' in response and response['errno'] != 0:
+                return {"status": "error", "message": f"获取多媒体文件列表失败: {response['errno']}"}
+
+            # imagelist/videolist/doclist return array field name 'info'; listall returns 'list'
+            raw_items = response.get('info') if use_method in ('imagelist', 'videolist', 'doclist') else response.get('list')
+            files = []
+            for item in raw_items or []:
+                # 修复编码问题：UTF-8被GBK解码导致的乱码
+                def fix_encoding(text):
+                    if not text or not isinstance(text, str):
+                        return text
+                    try:
+                        # 尝试将乱码的UTF-8字符串重新编码为正确的UTF-8
+                        return text.encode('latin-1').decode('utf-8')
+                    except (UnicodeEncodeError, UnicodeDecodeError):
+                        # 如果修复失败，返回原字符串
+                        return text
+                
+                file_info = {
+                    "fs_id": item.get('fs_id', 0),
+                    "path": fix_encoding(item.get('path', '')),
+                    "server_filename": fix_encoding(item.get('server_filename', '')),
+                    "size": item.get('size', 0),
+                    "server_mtime": item.get('server_mtime', item.get('server_mtime', 0)),
+                    "server_ctime": item.get('server_ctime', item.get('server_ctime', 0)),
+                    "local_mtime": item.get('local_mtime', 0),
+                    "local_ctime": item.get('local_ctime', 0),
+                    "isdir": item.get('isdir', 0),
+                    "category": item.get('category', 0),
+                    "md5": item.get('md5', ''),
+                    "thumbs": item.get('thumbs', {}),
+                    "media_type": item.get('media_type', 0),
+                    "width": item.get('width', 0),
+                    "height": item.get('height', 0),
+                    "duration": item.get('duration', 0)
+                }
+                files.append(file_info)
+
+            return {
+                "status": "success",
+                "message": "获取多媒体文件列表成功",
+                "path": path,
+                "total": len(files),
+                "files": files,
+                "has_more": response.get('has_more', False),
+                "routed_method": use_method,
+                "selected_category": category
+            }
     except Exception as e:
         return {"status": "error", "message": f"获取多媒体文件列表时发生错误: {str(e)}"}
 
@@ -1510,35 +1515,35 @@ def get_category_info(parent_path: str = "/", category: int = 3, recursion: int 
     - recursion: 是否递归（0/1）
     """
     try:
-        session = configure_session()
-        url = 'https://pan.baidu.com/api/categoryinfo'
-        params = {
-            'access_token': access_token,
-            'category': int(category),
-            'parent_path': parent_path,
-            'recursion': int(recursion),
-        }
-        headers = {'User-Agent': 'pan.baidu.com'}
-        r = session.get(url, params=params, timeout=TIMEOUT, headers=headers)
-        r.raise_for_status()
-        data = r.json()
-        if data.get('errno') != 0:
-            return { 'status': 'error', 'message': f"获取分类文件总数失败: {data.get('errno')}", 'response': data }
-        # 官方返回 info:{"<category>": { total, size, count }}
-        info = data.get('info') or {}
-        key = str(int(category))
-        detail = info.get(key) or {}
-        return {
-            'status': 'success',
-            'message': '获取分类文件总数成功',
-            'parent_path': parent_path,
-            'category': int(category),
-            'recursion': int(recursion),
-            'total': detail.get('total'),
-            'count': detail.get('count'),
-            'size': detail.get('size'),
-            'raw': data,
-        }
+        with configure_session() as session:
+            url = 'https://pan.baidu.com/api/categoryinfo'
+            params = {
+                'access_token': access_token,
+                'category': int(category),
+                'parent_path': parent_path,
+                'recursion': int(recursion),
+            }
+            headers = {'User-Agent': 'pan.baidu.com'}
+            r = session.get(url, params=params, timeout=TIMEOUT, headers=headers)
+            r.raise_for_status()
+            data = r.json()
+            if data.get('errno') != 0:
+                return { 'status': 'error', 'message': f"获取分类文件总数失败: {data.get('errno')}", 'response': data }
+            # 官方返回 info:{"<category>": { total, size, count }}
+            info = data.get('info') or {}
+            key = str(int(category))
+            detail = info.get(key) or {}
+            return {
+                'status': 'success',
+                'message': '获取分类文件总数成功',
+                'parent_path': parent_path,
+                'category': int(category),
+                'recursion': int(recursion),
+                'total': detail.get('total'),
+                'count': detail.get('count'),
+                'size': detail.get('size'),
+                'raw': data,
+            }
     except Exception as e:
         return { 'status': 'error', 'message': f"获取分类文件总数时发生错误: {str(e)}" }
 
