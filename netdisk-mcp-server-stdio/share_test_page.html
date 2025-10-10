@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>百度网盘分享功能测试</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background-color: #fafafa;
+        }
+        .section h2 {
+            color: #2c3e50;
+            margin-top: 0;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #555;
+        }
+        input, textarea, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+            box-sizing: border-box;
+        }
+        button {
+            background-color: #3498db;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #2980b9;
+        }
+        button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .success {
+            background-color: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background-color: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .info {
+            background-color: #d1ecf1;
+            border: 1px solid #bee5eb;
+            color: #0c5460;
+        }
+        .share-link {
+            background-color: #e8f5e8;
+            border: 1px solid #c3e6cb;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 15px;
+        }
+        .share-link a {
+            color: #0066cc;
+            text-decoration: none;
+            font-weight: bold;
+        }
+        .share-link a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>百度网盘分享功能测试</h1>
+        
+        <div class="section">
+            <h2>1. 创建分享链接</h2>
+            <div class="form-group">
+                <label for="fsidList">文件ID列表 (用逗号分隔):</label>
+                <input type="text" id="fsidList" placeholder="例如: 806200513459837,709438512130804" value="806200513459837">
+            </div>
+            <div class="form-group">
+                <label for="period">分享有效期 (天):</label>
+                <select id="period">
+                    <option value="1">1天</option>
+                    <option value="7" selected>7天</option>
+                    <option value="30">30天</option>
+                    <option value="365">365天</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label for="pwd">分享密码 (可选，4位数字+小写字母):</label>
+                <input type="text" id="pwd" placeholder="留空自动生成" maxlength="4">
+            </div>
+            <div class="form-group">
+                <label for="remark">分享备注:</label>
+                <input type="text" id="remark" placeholder="例如: 测试分享">
+            </div>
+            <button onclick="createShare()">创建分享链接</button>
+            <div id="createResult" class="result" style="display: none;"></div>
+        </div>
+
+        <div class="section">
+            <h2>2. 查询分享详情</h2>
+            <div class="form-group">
+                <label for="shareId">分享ID:</label>
+                <input type="text" id="shareId" placeholder="例如: 18474067411">
+            </div>
+            <button onclick="queryShare()">查询分享详情</button>
+            <div id="queryResult" class="result" style="display: none;"></div>
+        </div>
+
+        <div class="section">
+            <h2>3. 分享文件转存</h2>
+            <div class="form-group">
+                <label for="transferShareId">分享ID:</label>
+                <input type="text" id="transferShareId" placeholder="例如: 18474067411">
+            </div>
+            <div class="form-group">
+                <label for="transferPwd">分享密码:</label>
+                <input type="text" id="transferPwd" placeholder="例如: nja5">
+            </div>
+            <div class="form-group">
+                <label for="transferFsids">要转存的文件ID列表 (用逗号分隔):</label>
+                <input type="text" id="transferFsids" placeholder="例如: 806200513459837">
+            </div>
+            <div class="form-group">
+                <label for="destPath">转存目标路径:</label>
+                <input type="text" id="destPath" value="/" placeholder="例如: /我的文档">
+            </div>
+            <button onclick="transferShare()">转存分享文件</button>
+            <div id="transferResult" class="result" style="display: none;"></div>
+        </div>
+
+        <div class="section">
+            <h2>4. 获取分享下载地址</h2>
+            <div class="form-group">
+                <label for="downloadShareId">分享ID:</label>
+                <input type="text" id="downloadShareId" placeholder="例如: 18474067411">
+            </div>
+            <div class="form-group">
+                <label for="downloadPwd">分享密码:</label>
+                <input type="text" id="downloadPwd" placeholder="例如: nja5">
+            </div>
+            <div class="form-group">
+                <label for="downloadFsid">文件ID:</label>
+                <input type="text" id="downloadFsid" placeholder="例如: 806200513459837">
+            </div>
+            <button onclick="getDownloadUrl()">获取下载地址</button>
+            <div id="downloadResult" class="result" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api/share';
+        
+        function showResult(elementId, data, isSuccess = true) {
+            const element = document.getElementById(elementId);
+            element.style.display = 'block';
+            element.className = `result ${isSuccess ? 'success' : 'error'}`;
+            element.textContent = JSON.stringify(data, null, 2);
+        }
+
+        async function createShare() {
+            const fsidList = document.getElementById('fsidList').value.split(',').map(id => id.trim()).filter(id => id);
+            const period = parseInt(document.getElementById('period').value);
+            const pwd = document.getElementById('pwd').value.trim() || null;
+            const remark = document.getElementById('remark').value.trim();
+
+            if (fsidList.length === 0) {
+                showResult('createResult', { error: '请输入至少一个文件ID' }, false);
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/create`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        fsid_list: fsidList,
+                        period: period,
+                        pwd: pwd,
+                        remark: remark
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('createResult', data, true);
+                    
+                    // 显示分享链接
+                    if (data.data && data.data.link) {
+                        const shareDiv = document.createElement('div');
+                        shareDiv.className = 'share-link';
+                        shareDiv.innerHTML = `
+                            <h3>分享链接已创建成功！</h3>
+                            <p><strong>分享链接:</strong> <a href="${data.data.link}" target="_blank">${data.data.link}</a></p>
+                            <p><strong>提取码:</strong> ${data.data.pwd}</p>
+                            <p><strong>有效期:</strong> ${data.data.period}天</p>
+                            <p><strong>备注:</strong> ${data.data.remark}</p>
+                        `;
+                        document.getElementById('createResult').appendChild(shareDiv);
+                    }
+                } else {
+                    showResult('createResult', data, false);
+                }
+            } catch (error) {
+                showResult('createResult', { error: error.message }, false);
+            }
+        }
+
+        async function queryShare() {
+            const shareId = document.getElementById('shareId').value.trim();
+            
+            if (!shareId) {
+                showResult('queryResult', { error: '请输入分享ID' }, false);
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/query/${shareId}`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('queryResult', data, true);
+                } else {
+                    showResult('queryResult', data, false);
+                }
+            } catch (error) {
+                showResult('queryResult', { error: error.message }, false);
+            }
+        }
+
+        async function transferShare() {
+            const shareId = parseInt(document.getElementById('transferShareId').value);
+            const pwd = document.getElementById('transferPwd').value.trim();
+            const fsids = document.getElementById('transferFsids').value.split(',').map(id => id.trim()).filter(id => id);
+            const destPath = document.getElementById('destPath').value.trim() || '/';
+
+            if (!shareId || !pwd || fsids.length === 0) {
+                showResult('transferResult', { error: '请填写完整的转存信息' }, false);
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/transfer`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        share_id: shareId,
+                        pwd: pwd,
+                        fsids: fsids,
+                        dest_path: destPath
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('transferResult', data, true);
+                } else {
+                    showResult('transferResult', data, false);
+                }
+            } catch (error) {
+                showResult('transferResult', { error: error.message }, false);
+            }
+        }
+
+        async function getDownloadUrl() {
+            const shareId = parseInt(document.getElementById('downloadShareId').value);
+            const pwd = document.getElementById('downloadPwd').value.trim();
+            const fsid = document.getElementById('downloadFsid').value.trim();
+
+            if (!shareId || !pwd || !fsid) {
+                showResult('downloadResult', { error: '请填写完整的下载信息' }, false);
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/download?share_id=${shareId}&pwd=${encodeURIComponent(pwd)}&fsid=${encodeURIComponent(fsid)}`);
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('downloadResult', data, true);
+                } else {
+                    showResult('downloadResult', data, false);
+                }
+            } catch (error) {
+                showResult('downloadResult', { error: error.message }, false);
+            }
+        }
+
+        // 页面加载完成后显示API帮助信息
+        window.addEventListener('load', async () => {
+            try {
+                const response = await fetch(`${API_BASE}/help`);
+                const data = await response.json();
+                console.log('分享API帮助信息:', data);
+            } catch (error) {
+                console.error('获取API帮助信息失败:', error);
+            }
+        });
+    </script>
+</body>
+</html>

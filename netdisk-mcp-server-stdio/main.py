@@ -8,11 +8,11 @@ FastAPI应用配置和路由挂载
 import os
 from fastapi import FastAPI, APIRouter
 import logging
-from typing import Optional
+from typing import Optional, List
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
-from fastapi import Body
+from fastapi import Body, Query
 from dotenv import load_dotenv
 
 # 加载环境变量
@@ -119,6 +119,7 @@ except Exception:
 from api.reports import router as reports_router
 from api.sync import router as sync_router
 from api.purchases import router as purchases_alias_router
+from api.share import router as share_router
 
 
 @app.get("/auth/result")
@@ -566,22 +567,56 @@ async def compat_categoryinfo(category: int, start: int = 0, limit: int = 100, o
             return JSONResponse({"status": "error", "message": getattr(e, 'detail', str(e))}, status_code=e.status_code or 502)
         return JSONResponse({"status": "error", "message": str(e)}, status_code=502)
 
-# 占位：分享相关老接口，暂未实现时返回明确错误
+# 分享相关接口 - 使用新的分享API
 @compat_router.post("/share/create")
-async def compat_share_create():
-    return JSONResponse({"status": "error", "message": "share create 未实现"}, status_code=501)
+async def compat_share_create(
+    fsid_list: List[str] = Body(..., description="分享文件ID列表"),
+    period: int = Body(7, description="分享有效期，单位天"),
+    pwd: Optional[str] = Body(None, description="分享密码，4位数字+小写字母组成"),
+    remark: Optional[str] = Body("", description="分享备注")
+):
+    """兼容性接口：创建分享链接"""
+    try:
+        from api.share import create_share_link
+        return await create_share_link(fsid_list, period, pwd, remark)
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": f"创建分享链接失败: {str(e)}"}, status_code=500)
 
 @compat_router.get("/share/info")
-async def compat_share_info():
-    return JSONResponse({"status": "error", "message": "share info 未实现"}, status_code=501)
+async def compat_share_info(share_id: int = Query(..., description="分享ID")):
+    """兼容性接口：查询分享详情"""
+    try:
+        from api.share import get_share_info
+        return await get_share_info(share_id)
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": f"查询分享详情失败: {str(e)}"}, status_code=500)
 
 @compat_router.post("/share/transfer")
-async def compat_share_transfer():
-    return JSONResponse({"status": "error", "message": "share transfer 未实现"}, status_code=501)
+async def compat_share_transfer(
+    share_id: int = Body(..., description="分享ID"),
+    pwd: str = Body(..., description="分享密码"),
+    fsids: List[str] = Body(..., description="要转存的文件ID列表"),
+    dest_path: str = Body("/", description="转存目标路径")
+):
+    """兼容性接口：分享文件转存"""
+    try:
+        from api.share import transfer_share_files
+        return await transfer_share_files(share_id, pwd, fsids, dest_path)
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": f"分享文件转存失败: {str(e)}"}, status_code=500)
 
 @compat_router.get("/share/dlink")
-async def compat_share_dlink():
-    return JSONResponse({"status": "error", "message": "share dlink 未实现"}, status_code=501)
+async def compat_share_dlink(
+    share_id: int = Query(..., description="分享ID"),
+    pwd: str = Query(..., description="分享密码"),
+    fsid: str = Query(..., description="文件ID")
+):
+    """兼容性接口：获取分享下载地址"""
+    try:
+        from api.share import get_share_download_url
+        return await get_share_download_url(share_id, pwd, fsid)
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": f"获取分享下载地址失败: {str(e)}"}, status_code=500)
 
 # 注册路由
 app.include_router(auth_router)
@@ -593,6 +628,7 @@ app.include_router(wallet_router)
 app.include_router(notify_router)
 app.include_router(notifications_router)
 app.include_router(netdisk_router)
+app.include_router(share_router)
 app.include_router(reports_router)
 app.include_router(sync_router)
 app.include_router(purchases_alias_router)
@@ -621,6 +657,15 @@ async def admin_page():
     if os.path.exists(admin_file):
         return FileResponse(admin_file)
     return {"error": "Admin page not found"}
+
+@app.get("/share-test")
+async def share_test_page():
+    """分享功能测试页面"""
+    test_file = os.path.join(BASE_DIR, "share_test_page.html")
+    if os.path.exists(test_file):
+        return FileResponse(test_file)
+    else:
+        return JSONResponse({"error": "测试页面不存在"}, status_code=404)
 
 @app.get("/login")
 async def login_page():
