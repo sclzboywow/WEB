@@ -7,14 +7,17 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 import sqlite3
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Tuple
 import time
 import os
 import json
 import threading
+import asyncio
+import re
 
 
 from services.db import init_sync_db, get_db_connection
+from api.netdisk import ensure_directory, move_files
 
 router = APIRouter(prefix="/api/sync", tags=["Sync"]) 
 
@@ -111,6 +114,11 @@ async def api_dir_scan(payload: Dict[str, Any]):
 # ============== 增量同步（基于本地 JSON 索引/状态） ==============
 
 STATE_FILE = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.sync_state.json')
+SHARED_GALLERY_ROOT = os.getenv('SHARED_GALLERY_ROOT', '/共享图集')
+SHARED_GALLERY_BUCKET_SIZE = int(os.getenv('SHARED_GALLERY_BUCKET_SIZE', '1000'))
+SHARED_GALLERY_MAX_FILES = int(os.getenv('SHARED_GALLERY_MAX_FILES', '100000'))
+SHARED_GALLERY_SHARD_PREFIX = os.getenv('SHARED_GALLERY_SHARD_PREFIX', 'batch_')
+_SHARED_GALLERY_LOCK = asyncio.Lock()
 
 # 轻量内存任务管理（仅为旧前端的同步 UI 提供兼容态）
 _TASKS: Dict[int, Dict[str, Any]] = {}
@@ -191,6 +199,157 @@ def _save_state(data: Dict[str, Any]):
 
 def _path_key(path: str) -> str:
     return path if path and path.startswith('/') else f"/{path or ''}"
+
+async def _rebalance_shared_gallery_if_needed(path: str, items: List[Dict[str, Any]]) -> None:
+    """将直接位于 /共享图集 根下的文件搬入分片子目录。
+    - 仅在 path == SHARED_GALLERY_ROOT 时运行
+    - 读取 DB 统计分片现有数量
+    - 使用官方 move_files & ensure_directory 搬运，ondup='fail'
+    """
+    if _path_key(path) != _path_key(SHARED_GALLERY_ROOT):
+        return
+    if not items:
+        return
+    # 仅挑选当前页直接位于根下的文件
+    root_prefix = _path_key(SHARED_GALLERY_ROOT) + '/'
+    direct_files: List[Dict[str, Any]] = []
+    for it in items:
+        try:
+            if int(it.get('isdir') or 0) != 0:
+                continue
+            p = it.get('path') or ''
+            if not p.startswith(root_prefix):
+                continue
+            # 直接子项：只包含一个 '/'
+            if p.count('/') == root_prefix.count('/'):
+                # 极端情况下 path 可能含重复斜杠，降级判定
+                pass
+            # 更稳健：去除前缀后的余部不含 '/'
+            rest = p[len(root_prefix):]
+            if '/' in rest:
+                continue
+            direct_files.append(it)
+        except Exception:
+            continue
+    if not direct_files:
+        return
+
+    async with _SHARED_GALLERY_LOCK:
+        # 统计当前库内 /共享图集/ 下的各分片目录文件数
+        shard_counts: Dict[str, int] = {}
+        total_files = 0
+        try:
+            conn = get_db_connection(); cur = conn.cursor()
+            cur.execute("SELECT file_path FROM file_records WHERE isdir=0 AND file_path LIKE ?", (f"{root_prefix}%",))
+            rows = cur.fetchall()
+            for (fp,) in rows:
+                total_files += 1
+                # 提取第一层子目录名
+                try:
+                    rel = fp[len(root_prefix):]
+                    first = rel.split('/', 1)[0]
+                    # 仅统计符合 batch_ 命名的子目录
+                    if first and first.startswith(SHARED_GALLERY_SHARD_PREFIX):
+                        shard_counts[first] = shard_counts.get(first, 0) + 1
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+        # 总量上限检查
+        if total_files >= SHARED_GALLERY_MAX_FILES:
+            try:
+                print(f"shared-gallery.limit-hit total={total_files} max={SHARED_GALLERY_MAX_FILES}")
+            except Exception:
+                pass
+            return
+
+        # 计算可用 shard；寻找第一个计数 < BUCKET_SIZE 的分片
+        max_shards = SHARED_GALLERY_MAX_FILES // SHARED_GALLERY_BUCKET_SIZE
+        def _format_shard(idx: int) -> str:
+            return f"{SHARED_GALLERY_SHARD_PREFIX}{idx:03d}"
+
+        target_shard = None
+        # 先按序查找已有 shard 是否有空位
+        for i in range(1, max_shards + 1):
+            name = _format_shard(i)
+            if shard_counts.get(name, 0) < SHARED_GALLERY_BUCKET_SIZE:
+                target_shard = name
+                break
+        if target_shard is None:
+            # 没有空位：如还能新建，则创建下一号；否则返回
+            existing = 0
+            for k in shard_counts.keys():
+                if k.startswith(SHARED_GALLERY_SHARD_PREFIX):
+                    existing += 1
+            if existing >= max_shards:
+                try:
+                    print(f"shared-gallery.no-slot existing={existing} max_shards={max_shards}")
+                except Exception:
+                    pass
+                return
+            target_shard = _format_shard(existing + 1)
+
+        # 确保目标目录存在
+        target_dir = f"{_path_key(SHARED_GALLERY_ROOT)}/{target_shard}"
+        try:
+            _ = await ensure_directory(target_dir)
+        except Exception:
+            # 目录存在或创建失败都不中断主流程
+            pass
+
+        # 组装 move 操作：每批 20 条
+        ops: List[Dict[str, Any]] = []
+        moved = 0
+        for it in direct_files:
+            src = it.get('path') or ''
+            name = it.get('server_filename') or os.path.basename(src)
+            dst = f"{target_dir}/{name}"
+            ops.append({'path': src, 'dest': dst})
+            if len(ops) >= 20:
+                try:
+                    res = await move_files(ops, ondup='fail')
+                    moved += len(ops)
+                except Exception:
+                    pass
+                ops = []
+        if ops:
+            try:
+                res = await move_files(ops, ondup='fail')
+                moved += len(ops)
+            except Exception:
+                pass
+
+        # 更新 DB 中这些文件的路径
+        if moved:
+            try:
+                conn = get_db_connection(); cur = conn.cursor()
+                for it in direct_files:
+                    old_p = it.get('path') or ''
+                    name = it.get('server_filename') or os.path.basename(old_p)
+                    new_p = f"{target_dir}/{name}"
+                    cur.execute(
+                        "UPDATE file_records SET file_path=?, file_name=? WHERE file_path=? AND isdir=0",
+                        (new_p, name, old_p)
+                    )
+                conn.commit()
+            except Exception:
+                pass
+            finally:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+        try:
+            print(f"shared-gallery.rebalance shard={target_shard} moved={moved} path={path}")
+        except Exception:
+            pass
 
 @router.get('/incremental/status')
 async def api_incr_status(path: str = '/'):
@@ -617,7 +776,22 @@ async def api_sync_step(payload: Dict[str, Any]):
                         conn.close()
                     except Exception:
                         pass
+                # 分片搬运：仅在 /共享图集 根路径且本页包含直接子项文件时执行
+                try:
+                    await _rebalance_shared_gallery_if_needed(path, state_items)
+                except Exception:
+                    try:
+                        print("shared-gallery.rebalance.error")
+                    except Exception:
+                        pass
                 break
+        # 在 upsert 完成后，尝试对 /共享图集 根下的文件做分片搬运
+        try:
+            state_items = data.get('items') or []
+            await _rebalance_shared_gallery_if_needed(path, state_items)
+        except Exception:
+            # 不阻断原有流程
+            pass
     except Exception:
         pass
     return res

@@ -77,6 +77,12 @@ def init_sync_db():
             FOREIGN KEY (sync_id) REFERENCES sync_tasks (sync_id)
         )
     ''')
+
+    # 为 file_path 增加索引，优化基于路径前缀的统计/查询
+    try:
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_file_records_path ON file_records(file_path)')
+    except Exception:
+        pass
     
     # 创建用户表
     cursor.execute('''
