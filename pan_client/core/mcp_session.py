@@ -79,10 +79,29 @@ class McpSession:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
         
-        # Extract configuration
-        self.stdio_binary = self.mcp_config.get('stdio_binary', 'python')
-        self.entry_point = self.mcp_config.get('entry', '../netdisk-mcp-server-stdio/netdisk.py')
-        self.args = self.mcp_config.get('args', ['--transport', 'stdio'])
+        # Extract connection mode
+        self.mode = self.mcp_config.get('mode', 'local-stdio')
+        
+        # Extract configuration based on mode
+        if self.mode == 'local-stdio':
+            self.stdio_binary = self.mcp_config.get('stdio_binary', 'python')
+            self.entry_point = self.mcp_config.get('entry', '../netdisk-mcp-server-stdio/netdisk.py')
+            self.args = self.mcp_config.get('args', ['--transport', 'stdio'])
+        elif self.mode == 'ssh-stdio':
+            self.ssh_config = self.mcp_config.get('ssh', {})
+            self.ssh_host = self.ssh_config.get('host')
+            self.ssh_user = self.ssh_config.get('user', 'netdisk')
+            self.ssh_identity_file = self.ssh_config.get('identity_file')
+            self.ssh_command = self.ssh_config.get('command', 'python3 /srv/netdisk/netdisk.py --transport stdio')
+        elif self.mode in ('tcp', 'tcp-tls'):
+            self.tcp_config = self.mcp_config.get('tcp', {})
+            self.tcp_host = self.tcp_config.get('host', 'localhost')
+            self.tcp_port = self.tcp_config.get('port', 8765)
+            self.tcp_tls = self.tcp_config.get('tls', False)
+            self.tcp_cert_file = self.tcp_config.get('cert_file')
+            self.tcp_key_file = self.tcp_config.get('key_file')
+        else:
+            raise McpSessionError(f"Unsupported MCP mode: {self.mode}")
         
         # Environment setup
         self.env = os.environ.copy()
@@ -92,9 +111,12 @@ class McpSession:
         self.metrics = McpMetrics()
         
         logger.info("McpSession initialized", extra={
-            "entry_point": self.entry_point,
-            "stdio_binary": self.stdio_binary,
-            "args": self.args
+            "mode": self.mode,
+            "entry_point": getattr(self, 'entry_point', None),
+            "stdio_binary": getattr(self, 'stdio_binary', None),
+            "args": getattr(self, 'args', None),
+            "ssh_host": getattr(self, 'ssh_host', None),
+            "tcp_endpoint": f"{getattr(self, 'tcp_host', None)}:{getattr(self, 'tcp_port', None)}" if hasattr(self, 'tcp_host') else None
         })
     
     def _setup_environment(self) -> None:
@@ -152,11 +174,169 @@ class McpSession:
         
         logger.info("MCP event loop thread started")
     
+    async def _start_local_stdio(self):
+        """Start local stdio subprocess."""
+        if not self.entry_point:
+            raise McpSessionError("Entry point not configured")
+        
+        # Resolve entry point path
+        entry_path = Path(self.entry_point)
+        if not entry_path.is_absolute():
+            # Relative to pan_client directory
+            pan_client_dir = Path(__file__).parent.parent
+            entry_path = pan_client_dir / entry_path
+        
+        if not entry_path.exists():
+            raise McpSessionError(f"MCP server entry point not found: {entry_path}")
+        
+        # Prepare command
+        cmd = [self.stdio_binary, str(entry_path)] + self.args
+        
+        start_time = time.time()
+        logger.info("Starting local MCP server", extra={
+            "command": ' '.join(cmd),
+            "entry_path": str(entry_path),
+            "working_dir": str(entry_path.parent),
+            "timestamp": start_time
+        })
+        
+        # Start subprocess
+        self._process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=self.env,
+            cwd=entry_path.parent
+        )
+        
+        # Create MCP client session
+        server_params = StdioServerParameters(
+            command=self.stdio_binary,
+            args=[str(entry_path)] + self.args,
+            env=self.env
+        )
+        
+        self._exit_stack = AsyncExitStack()
+        self._session = await self._exit_stack.enter_async_context(
+            stdio_client(server_params)
+        )
+        
+        # Initialize the session
+        await self._session.initialize()
+        
+        startup_duration = time.time() - start_time
+        logger.info("Local stdio MCP session started", extra={
+            "startup_duration": startup_duration,
+            "process_id": self._process.pid if self._process else None,
+            "timestamp": time.time()
+        })
+
+    async def _start_ssh_stdio(self):
+        """Start SSH stdio connection to remote server."""
+        if not self.ssh_host:
+            raise McpSessionError("SSH host not configured")
+        
+        # Determine identity file
+        identity_file = self.ssh_identity_file
+        if not identity_file:
+            # Try common SSH key locations
+            for key_name in ['id_ed25519', 'id_rsa']:
+                key_path = os.path.expanduser(f'~/.ssh/{key_name}')
+                if os.path.exists(key_path):
+                    identity_file = key_path
+                    break
+        
+        if not identity_file or not os.path.exists(identity_file):
+            raise McpSessionError(f"SSH identity file not found: {identity_file}")
+        
+        # Build SSH command
+        ssh_cmd = ['ssh', '-i', identity_file, f'{self.ssh_user}@{self.ssh_host}', self.ssh_command]
+        
+        start_time = time.time()
+        logger.info("Starting SSH stdio MCP connection", extra={
+            "ssh_host": self.ssh_host,
+            "ssh_user": self.ssh_user,
+            "identity_file": identity_file,
+            "remote_command": self.ssh_command,
+            "timestamp": start_time
+        })
+        
+        # Prepare server parameters
+        server_params = StdioServerParameters(
+            command=ssh_cmd[0],
+            args=ssh_cmd[1:],
+            env=self.env
+        )
+        
+        # Create stdio transport
+        self._exit_stack = AsyncExitStack()
+        self._session = await self._exit_stack.enter_async_context(
+            stdio_client(server_params)
+        )
+        
+        # Initialize the session
+        await self._session.initialize()
+        
+        startup_duration = time.time() - start_time
+        logger.info("SSH stdio MCP session started", extra={
+            "startup_duration": startup_duration,
+            "ssh_host": self.ssh_host,
+            "ssh_user": self.ssh_user,
+            "timestamp": time.time()
+        })
+
+    async def _start_tcp(self):
+        """Start TCP connection to remote server."""
+        try:
+            start_time = time.time()
+            logger.info("Starting TCP MCP connection", extra={
+                "tcp_host": self.tcp_host,
+                "tcp_port": self.tcp_port,
+                "tls_enabled": self.tcp_tls,
+                "timestamp": start_time
+            })
+            
+            if self.tcp_tls:
+                # TLS mode
+                import ssl
+                ssl_context = ssl.create_default_context()
+                
+                if self.tcp_cert_file and self.tcp_key_file:
+                    ssl_context.load_cert_chain(self.tcp_cert_file, self.tcp_key_file)
+                
+                # Use MCP's TLS TCP client
+                from mcp.client.tcp import tcp_client_tls
+                tcp_transport = await tcp_client_tls(self.tcp_host, self.tcp_port, ssl_context)
+            else:
+                # Pure TCP mode
+                from mcp.client.tcp import tcp_client
+                tcp_transport = await tcp_client(self.tcp_host, self.tcp_port)
+            
+            read, write = tcp_transport
+            self._session = ClientSession(read, write)
+            await self._session.initialize()
+            
+            startup_duration = time.time() - start_time
+            logger.info("TCP MCP session started", extra={
+                "startup_duration": startup_duration,
+                "tcp_host": self.tcp_host,
+                "tcp_port": self.tcp_port,
+                "tls_enabled": self.tcp_tls,
+                "cert_file": self.tcp_cert_file,
+                "timestamp": time.time()
+            })
+            
+        except ImportError as e:
+            raise McpSessionError(f"MCP TCP client not available: {e}")
+        except Exception as e:
+            raise McpSessionError(f"Failed to establish TCP connection: {e}")
+
     async def ensure_started(self) -> None:
         """
         Ensure MCP session is started.
         
-        Launches the MCP server subprocess if not already running.
+        Launches the MCP server subprocess or establishes remote connection based on mode.
         """
         if self._is_started:
             return
@@ -165,70 +345,29 @@ class McpSession:
             # Start event loop thread first
             if not self._loop:
                 self._start_event_loop_thread()
-            # Resolve entry point path
-            entry_path = Path(self.entry_point)
-            if not entry_path.is_absolute():
-                # Relative to pan_client directory
-                pan_client_dir = Path(__file__).parent.parent
-                entry_path = pan_client_dir / entry_path
             
-            if not entry_path.exists():
-                raise McpSessionError(f"MCP server entry point not found: {entry_path}")
-            
-            # Prepare command
-            cmd = [self.stdio_binary, str(entry_path)] + self.args
-            
-            start_time = time.time()
-            logger.info("Starting MCP server", extra={
-                "command": ' '.join(cmd),
-                "entry_path": str(entry_path),
-                "working_dir": str(entry_path.parent),
-                "timestamp": start_time
-            })
-            
-            # Start subprocess
-            self._process = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=self.env,
-                cwd=entry_path.parent
-            )
-            
-            # Create MCP client session
-            server_params = StdioServerParameters(
-                command=self.stdio_binary,
-                args=[str(entry_path)] + self.args,
-                env=self.env
-            )
-            
-            self._exit_stack = AsyncExitStack()
-            self._session = await self._exit_stack.enter_async_context(
-                stdio_client(server_params)
-            )
-            
-            # Initialize the session
-            await self._session.initialize()
+            # Start based on mode
+            if self.mode == 'local-stdio':
+                await self._start_local_stdio()
+            elif self.mode == 'ssh-stdio':
+                await self._start_ssh_stdio()
+            elif self.mode in ('tcp', 'tcp-tls'):
+                await self._start_tcp()
+            else:
+                raise McpSessionError(f"Unsupported MCP mode: {self.mode}")
             
             self._is_started = True
-            startup_duration = time.time() - start_time
-            logger.info("MCP session started successfully", extra={
-                "startup_duration": startup_duration,
-                "process_id": self._process.pid if self._process else None,
-                "timestamp": time.time()
-            })
+            logger.info(f"MCP session started successfully in {self.mode} mode")
             
         except Exception as e:
-            startup_duration = time.time() - start_time
-            logger.error("Failed to start MCP session", extra={
+            logger.error(f"Failed to start MCP session in {self.mode} mode", extra={
                 "error": str(e),
                 "error_type": type(e).__name__,
-                "startup_duration": startup_duration,
+                "mode": self.mode,
                 "timestamp": time.time()
             })
             await self.dispose()
-            raise McpSessionError(f"Failed to start MCP session: {e}") from e
+            raise McpSessionError(f"MCP连接失败 ({self.mode}): {str(e)}") from e
     
     def _map_mcp_error(self, error: Exception) -> McpSessionError:
         """
@@ -296,11 +435,16 @@ class McpSession:
                 result_size=result_size
             )
             
+            # Record network latency for remote connections
+            if self.mode in ('ssh-stdio', 'tcp', 'tcp-tls'):
+                self.metrics.record_network_latency(duration * 1000)  # Convert to ms
+            
             # Log successful completion
             logger.info("MCP tool completed successfully", extra={
                 "tool": name,
                 "duration": duration,
                 "result_size": result_size,
+                "mode": self.mode,
                 "timestamp": time.time()
             })
             
@@ -435,6 +579,22 @@ class McpSession:
         """
         return self.metrics.get_summary()
     
+    def get_connection_info(self) -> Dict[str, Any]:
+        """Get connection information."""
+        info = {
+            'mode': self.mode,
+            'is_connected': self.is_alive(),
+            'session_start_time': self.metrics.session_start_time
+        }
+        
+        if self.mode == 'ssh-stdio':
+            info['remote_host'] = f"{self.ssh_user}@{self.ssh_host}"
+        elif self.mode in ('tcp', 'tcp-tls'):
+            info['remote_endpoint'] = f"{self.tcp_host}:{self.tcp_port}"
+            info['encrypted'] = self.tcp_tls
+        
+        return info
+
     def get_session_info(self) -> Dict[str, Any]:
         """
         Get session information.
@@ -445,8 +605,72 @@ class McpSession:
         return {
             'is_started': self._is_started,
             'is_alive': self.is_alive(),
-            'entry_point': self.entry_point,
-            'stdio_binary': self.stdio_binary,
-            'args': self.args,
+            'entry_point': getattr(self, 'entry_point', None),
+            'stdio_binary': getattr(self, 'stdio_binary', None),
+            'args': getattr(self, 'args', None),
             'process_pid': self._process.pid if self._process else None,
+            'mode': self.mode,
+            'session_start_time': self.metrics.session_start_time,
+            'call_count': self.metrics.call_count,
+            'error_count': self.metrics.error_count,
+            'health_score': self.metrics.get_summary().get('health_score', 0)
         }
+
+    async def _check_connection(self) -> bool:
+        """Check if connection is alive by pinging server."""
+        if not self._session:
+            return False
+        
+        try:
+            # Try to get available tools as a ping
+            await self._session.list_tools()
+            return True
+        except Exception:
+            return False
+
+    async def _reconnect(self, max_retries: int = 3) -> bool:
+        """Reconnect with exponential backoff."""
+        # Record connection drop
+        self.metrics.record_connection_event('drop')
+        
+        for attempt in range(max_retries):
+            wait_time = 2 ** attempt  # 2s, 4s, 8s
+            self.metrics.record_connection_event('reconnect_attempt')
+            
+            logger.info(f"尝试重连MCP服务器 (第{attempt+1}次)，等待{wait_time}秒...", extra={
+                "attempt": attempt + 1,
+                "max_retries": max_retries,
+                "wait_time": wait_time,
+                "mode": self.mode,
+                "timestamp": time.time()
+            })
+            await asyncio.sleep(wait_time)
+            
+            try:
+                await self.dispose()
+                self._is_started = False
+                await self.ensure_started()
+                
+                # Record successful reconnection
+                self.metrics.record_connection_event('reconnect_success')
+                
+                logger.info("MCP重连成功", extra={
+                    "attempt": attempt + 1,
+                    "mode": self.mode,
+                    "timestamp": time.time()
+                })
+                return True
+            except Exception as e:
+                logger.warning(f"重连失败: {e}", extra={
+                    "attempt": attempt + 1,
+                    "error": str(e),
+                    "mode": self.mode,
+                    "timestamp": time.time()
+                })
+        
+        logger.error("MCP重连失败，已达到最大重试次数", extra={
+            "max_retries": max_retries,
+            "mode": self.mode,
+            "timestamp": time.time()
+        })
+        return False

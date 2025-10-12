@@ -37,6 +37,19 @@ secret_key = os.getenv('BAIDU_NETDISK_SECRET_KEY')
 # 创建MCP服务器
 mcp = FastMCP("网盘服务")
 
+# 认证令牌（可选）
+AUTH_TOKEN = os.getenv('MCP_AUTH_TOKEN')
+
+def check_auth_token(func):
+    """认证装饰器（可选，用于TCP模式）"""
+    def wrapper(*args, **kwargs):
+        if AUTH_TOKEN:
+            # 这里可以添加token验证逻辑
+            # 目前MCP库可能不直接支持token验证，需要根据实际MCP库API调整
+            pass
+        return func(*args, **kwargs)
+    return wrapper
+
 # 定义分片大小为4MB
 CHUNK_SIZE = 4 * 1024 * 1024  # 4MB
 # 定义重试次数和超时时间
@@ -2252,5 +2265,44 @@ def get_help() -> str:
 
 
 if __name__ == "__main__":
-    # 直接运行服务器
-    mcp.run(transport="stdio")
+    import argparse
+    
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description='网盘MCP服务器')
+    parser.add_argument('--transport', choices=['stdio', 'tcp', 'http'], 
+                       default='stdio', help='传输模式 (默认: stdio)')
+    parser.add_argument('--tcp-host', default='0.0.0.0', 
+                       help='TCP监听地址 (默认: 0.0.0.0)')
+    parser.add_argument('--tcp-port', type=int, default=8765, 
+                       help='TCP监听端口 (默认: 8765)')
+    parser.add_argument('--tls-cert', help='TLS证书文件路径')
+    parser.add_argument('--tls-key', help='TLS私钥文件路径')
+    parser.add_argument('--tls-ca', help='TLS CA证书文件路径')
+    parser.add_argument('--auth-token', help='认证令牌 (可选)')
+    parser.add_argument('--http-host', default='0.0.0.0', 
+                       help='HTTP监听地址 (默认: 0.0.0.0)')
+    parser.add_argument('--http-port', type=int, default=8000, 
+                       help='HTTP监听端口 (默认: 8000)')
+    
+    args = parser.parse_args()
+    
+    # 根据传输模式启动服务器
+    if args.transport == 'tcp':
+        if args.tls_cert and args.tls_key:
+            # TLS模式
+            print(f"启动TLS TCP服务器: {args.tcp_host}:{args.tcp_port}")
+            print(f"证书: {args.tls_cert}")
+            print(f"私钥: {args.tls_key}")
+            mcp.run(transport='tcp', host=args.tcp_host, port=args.tcp_port, 
+                   tls_cert=args.tls_cert, tls_key=args.tls_key)
+        else:
+            # 纯TCP模式
+            print(f"启动TCP服务器: {args.tcp_host}:{args.tcp_port}")
+            mcp.run(transport='tcp', host=args.tcp_host, port=args.tcp_port)
+    elif args.transport == 'http':
+        print(f"启动HTTP服务器: {args.http_host}:{args.http_port}")
+        mcp.run(transport='streamable-http', host=args.http_host, port=args.http_port)
+    else:
+        # stdio模式（默认）
+        print("启动stdio模式服务器")
+        mcp.run(transport="stdio")

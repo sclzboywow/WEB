@@ -1,0 +1,30 @@
+[Unit]
+Description=Netdisk MCP Server
+After=network.target
+
+[Service]
+Type=simple
+User=netdisk
+Group=netdisk
+WorkingDirectory=/srv/netdisk
+Environment=BAIDU_NETDISK_ACCESS_TOKEN=your_access_token
+Environment=BAIDU_NETDISK_APP_KEY=your_app_key
+Environment=BAIDU_NETDISK_REFRESH_TOKEN=your_refresh_token
+Environment=BAIDU_NETDISK_SECRET_KEY=your_secret_key
+Environment=MCP_AUTH_TOKEN=your_optional_auth_token
+ExecStart=/usr/bin/python3 /srv/netdisk/netdisk.py --transport tcp --tcp-host 0.0.0.0 --tcp-port 8765
+Restart=always
+RestartSec=5
+
+# 安全设置
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/netdisk
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

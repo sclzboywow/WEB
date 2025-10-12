@@ -64,6 +64,76 @@ def get_mcp_config() -> Dict[str, Any]:
     transport_config = cfg.get('transport', {})
     return transport_config.get('mcp', {})
 
+def get_mcp_transport_config() -> Dict[str, Any]:
+    """Get MCP transport configuration based on mode."""
+    config = load_config()
+    mcp_config = config.get('transport', {}).get('mcp', {})
+    
+    mode = mcp_config.get('mode', 'local-stdio')
+    
+    if mode == 'ssh-stdio':
+        ssh = mcp_config.get('ssh', {})
+        return {
+            'mode': mode,
+            'ssh': {
+                'host': ssh.get('host'),
+                'user': ssh.get('user', 'netdisk'),
+                'identity_file': ssh.get('identity_file'),
+                'command': ssh.get('command', 'python3 /srv/netdisk/netdisk.py --transport stdio')
+            }
+        }
+    elif mode in ('tcp', 'tcp-tls'):
+        tcp = mcp_config.get('tcp', {})
+        return {
+            'mode': mode,
+            'tcp': {
+                'host': tcp.get('host', 'localhost'),
+                'port': tcp.get('port', 8765),
+                'tls': tcp.get('tls', False),
+                'cert_file': tcp.get('cert_file'),
+                'key_file': tcp.get('key_file')
+            }
+        }
+    else:
+        return {
+            'mode': 'local-stdio',
+            'stdio_binary': mcp_config.get('stdio_binary', 'python'),
+            'entry': mcp_config.get('entry', '../netdisk-mcp-server-stdio/netdisk.py'),
+            'args': mcp_config.get('args', ['--transport', 'stdio'])
+        }
+
+def validate_mcp_config(config: Dict) -> List[str]:
+    """Validate MCP configuration and return list of errors."""
+    errors = []
+    mode = config.get('mode', 'local-stdio')
+    
+    if mode == 'ssh-stdio':
+        ssh = config.get('ssh', {})
+        if not ssh.get('host'):
+            errors.append("SSH模式需要配置 ssh.host")
+        identity_file = ssh.get('identity_file') or os.path.expanduser('~/.ssh/id_rsa')
+        if not os.path.exists(identity_file):
+            # Try alternative key locations
+            found_key = False
+            for key_name in ['id_ed25519', 'id_rsa']:
+                key_path = os.path.expanduser(f'~/.ssh/{key_name}')
+                if os.path.exists(key_path):
+                    found_key = True
+                    break
+            if not found_key:
+                errors.append(f"SSH密钥文件不存在: {identity_file}")
+    elif mode in ('tcp', 'tcp-tls'):
+        tcp = config.get('tcp', {})
+        if not tcp.get('host'):
+            errors.append("TCP模式需要配置 tcp.host")
+        if tcp.get('tls'):
+            if tcp.get('cert_file') and not os.path.exists(tcp.get('cert_file')):
+                errors.append(f"TLS证书文件不存在: {tcp.get('cert_file')}")
+            if tcp.get('key_file') and not os.path.exists(tcp.get('key_file')):
+                errors.append(f"TLS私钥文件不存在: {tcp.get('key_file')}")
+    
+    return errors
+
 
 def get_transport_config() -> Dict[str, Any]:
     """

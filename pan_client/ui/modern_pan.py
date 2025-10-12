@@ -453,23 +453,34 @@ class FileManagerUI(QMainWindow):
         """更新MCP连接状态显示"""
         if self.mcp_session and self.mcp_session.is_alive():
             try:
-                # 获取MCP指标
-                metrics = self.mcp_session.get_metrics()
-                summary = self.mcp_session.get_metrics_summary()
+                # 获取连接信息
+                conn_info = self.mcp_session.get_connection_info()
+                mode = conn_info.get('mode', 'local-stdio')
                 
                 # 构建状态文本
-                if metrics['call_count'] > 0:
-                    status_text = f"MCP已连接 | {summary}"
-                    # 根据健康度设置颜色
-                    if metrics['health_score'] >= 80:
-                        color = "#4CAF50"  # 绿色 - 健康
-                    elif metrics['health_score'] >= 60:
-                        color = "#FF9800"  # 橙色 - 警告
-                    else:
-                        color = "#F44336"  # 红色 - 不健康
+                if mode == 'ssh-stdio':
+                    status_text = f"MCP已连接 (SSH: {conn_info.get('remote_host', 'N/A')})"
+                elif mode in ('tcp', 'tcp-tls'):
+                    endpoint = conn_info.get('remote_endpoint', 'N/A')
+                    encrypted = "🔒" if conn_info.get('encrypted') else ""
+                    status_text = f"MCP已连接 (TCP: {endpoint} {encrypted})"
                 else:
-                    status_text = "MCP已连接"
-                    color = "#4CAF50"  # 绿色
+                    status_text = "MCP已连接 (本地)"
+                
+                # 获取MCP指标
+                metrics = self.mcp_session.get_metrics()
+                if metrics['call_count'] > 0:
+                    summary = self.mcp_session.get_metrics_summary()
+                    status_text += f" | {summary}"
+                
+                # 根据健康度设置颜色
+                health_score = metrics.get('health_score', 100)
+                if health_score >= 80:
+                    color = "#4CAF50"  # 绿色 - 健康
+                elif health_score >= 60:
+                    color = "#FF9800"  # 橙色 - 警告
+                else:
+                    color = "#F44336"  # 红色 - 不健康
                 
                 self.mcp_status_label.setText(status_text)
                 self.mcp_status_label.setStyleSheet(f"color: {color};")
@@ -481,6 +492,24 @@ class FileManagerUI(QMainWindow):
         else:
             self.mcp_status_label.setText("MCP未连接")
             self.mcp_status_label.setStyleSheet("color: #F44336;")  # 红色
+
+    def _handle_mcp_connection_error(self, error):
+        """处理MCP连接错误"""
+        if self.mcp_session:
+            conn_info = self.mcp_session.get_connection_info()
+            
+            from .dialogs.reconnect_dialog import McpReconnectDialog
+            dialog = McpReconnectDialog(str(error), conn_info, self)
+            
+            if dialog.exec() == QDialog.Accepted:
+                # 用户点击重试
+                try:
+                    import asyncio
+                    asyncio.run(self.mcp_session._reconnect())
+                    QMessageBox.information(self, "成功", "MCP重连成功")
+                    self._update_mcp_status()
+                except Exception as e:
+                    QMessageBox.critical(self, "失败", f"重连失败: {e}")
 
     def _check_version_from_tray(self):
         """从系统托盘触发的版本检查"""

@@ -3,9 +3,26 @@
   "transport": {
     "mode": "rest",
     "mcp": {
-      "stdio_binary": "python",
+      "mode": "local-stdio",
+      "stdio_binary": "python3",
       "entry": "../netdisk-mcp-server-stdio/netdisk.py",
-      "args": ["--transport", "stdio"]
+      "args": ["--transport", "stdio"],
+      "env": {},
+      "ssh": {
+        "enabled": false,
+        "host": "mcp.example.com",
+        "user": "netdisk",
+        "identity_file": null,
+        "command": "python3 /srv/netdisk/netdisk.py --transport stdio"
+      },
+      "tcp": {
+        "enabled": false,
+        "host": "mcp.example.com",
+        "port": 8765,
+        "tls": false,
+        "cert_file": null,
+        "key_file": null
+      }
     }
   },
   "download_dir": "./downloads",

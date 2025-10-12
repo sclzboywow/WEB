@@ -41,6 +41,21 @@ def parse_args():
         action='store_true',
         help='Enable debug logging'
     )
+    parser.add_argument(
+        '--mcp-mode',
+        choices=['local', 'ssh', 'tcp'],
+        help='MCP connection mode (local=local stdio, ssh=SSH tunnel, tcp=TCP connection)'
+    )
+    parser.add_argument(
+        '--mcp-host',
+        type=str,
+        help='MCP server host address'
+    )
+    parser.add_argument(
+        '--mcp-port',
+        type=int,
+        help='MCP server port (TCP mode)'
+    )
     return parser.parse_args()
 
 
@@ -52,6 +67,23 @@ def setup_config(args):
     if args.use_mcp:
         config['transport']['mode'] = 'mcp'
         logger.info("MCP mode enabled via command line")
+    
+    # CLI overrides for MCP mode
+    if args.mcp_mode:
+        mcp_mode = f"{args.mcp_mode}-stdio" if args.mcp_mode in ('local', 'ssh') else args.mcp_mode
+        config['transport']['mcp']['mode'] = mcp_mode
+        logger.info(f"MCP mode set to: {mcp_mode}")
+    
+    if args.mcp_host:
+        if 'ssh' in config['transport']['mcp'].get('mode', ''):
+            config['transport']['mcp']['ssh']['host'] = args.mcp_host
+        else:
+            config['transport']['mcp']['tcp']['host'] = args.mcp_host
+        logger.info(f"MCP host set to: {args.mcp_host}")
+    
+    if args.mcp_port:
+        config['transport']['mcp']['tcp']['port'] = args.mcp_port
+        logger.info(f"MCP port set to: {args.mcp_port}")
     
     # Override config file if specified
     if args.config:
@@ -118,6 +150,23 @@ def main():
     try:
         # Load configuration
         config = setup_config(args)
+        
+        # Validate MCP configuration if using MCP mode
+        if is_mcp_mode(config):
+            from pan_client.core.config import validate_mcp_config
+            mcp_config = config['transport']['mcp']
+            errors = validate_mcp_config(mcp_config)
+            if errors:
+                logger.error("MCP配置错误：")
+                for error in errors:
+                    logger.error(f"  - {error}")
+                sys.exit(1)
+            
+            logger.info(f"使用MCP模式: {mcp_config.get('mode')}")
+            if mcp_config.get('mode') == 'ssh-stdio':
+                logger.info(f"远程主机: {mcp_config['ssh']['host']}")
+            elif mcp_config.get('mode') in ('tcp', 'tcp-tls'):
+                logger.info(f"远程端点: {mcp_config['tcp']['host']}:{mcp_config['tcp']['port']}")
         
         # Create client
         global _client

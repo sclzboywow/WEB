@@ -506,6 +506,177 @@ pytest -m integration
 3. 更新UI错误显示
 4. 添加错误恢复逻辑
 
+## 远程部署架构
+
+### 客户端-服务器分离
+
+MCP模式支持客户端与服务器分离部署，提供多种连接方式：
+
+- **本地stdio**：客户端直接启动本地MCP服务器子进程
+- **SSH隧道**：通过SSH连接远程服务器上的MCP服务
+- **TCP连接**：直接TCP连接到远程MCP服务器
+- **TLS加密**：支持TLS加密的TCP连接
+
+### 连接模式配置
+
+#### SSH-stdio模式
+
+通过SSH隧道连接远程MCP服务器：
+
+```json
+{
+  "transport": {
+    "mode": "mcp",
+    "mcp": {
+      "mode": "ssh-stdio",
+      "ssh": {
+        "host": "mcp-server.example.com",
+        "user": "netdisk",
+        "identity_file": "~/.ssh/id_ed25519",
+        "command": "python3 /srv/netdisk/netdisk.py --transport stdio"
+      }
+    }
+  }
+}
+```
+
+**SSH配置要求**：
+1. 生成SSH密钥对：
+   ```bash
+   ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519
+   ssh-copy-id netdisk@mcp-server.example.com
+   ```
+
+2. 确保远程服务器上MCP服务可执行：
+   ```bash
+   # 在远程服务器上
+   chmod +x /srv/netdisk/netdisk.py
+   ```
+
+#### TCP连接模式
+
+直接TCP连接到远程MCP服务器：
+
+```json
+{
+  "transport": {
+    "mode": "mcp",
+    "mcp": {
+      "mode": "tcp",
+      "tcp": {
+        "host": "mcp-server.example.com",
+        "port": 8765,
+        "tls": false
+      }
+    }
+  }
+}
+```
+
+#### TLS加密TCP模式
+
+使用TLS加密的TCP连接：
+
+```json
+{
+  "transport": {
+    "mode": "mcp",
+    "mcp": {
+      "mode": "tcp-tls",
+      "tcp": {
+        "host": "mcp-server.example.com",
+        "port": 8765,
+        "tls": true,
+        "cert_file": "/path/to/client.crt",
+        "key_file": "/path/to/client.key"
+      }
+    }
+  }
+}
+```
+
+### 服务器端部署
+
+#### 启动TCP服务器
+
+```bash
+# 纯TCP模式
+python3 netdisk.py --transport tcp --tcp-host 0.0.0.0 --tcp-port 8765
+
+# TLS加密模式
+python3 netdisk.py --transport tcp --tcp-host 0.0.0.0 --tcp-port 8765 \
+  --tls-cert /etc/ssl/certs/mcp-server.crt \
+  --tls-key /etc/ssl/private/mcp-server.key
+```
+
+#### systemd服务配置
+
+创建`/etc/systemd/system/netdisk-mcp-server.service`：
+
+```ini
+[Unit]
+Description=Netdisk MCP Server
+After=network.target
+
+[Service]
+Type=simple
+User=netdisk
+Group=netdisk
+WorkingDirectory=/srv/netdisk
+Environment=BAIDU_NETDISK_ACCESS_TOKEN=your_access_token
+Environment=BAIDU_NETDISK_APP_KEY=your_app_key
+Environment=BAIDU_NETDISK_REFRESH_TOKEN=your_refresh_token
+Environment=BAIDU_NETDISK_SECRET_KEY=your_secret_key
+ExecStart=/usr/bin/python3 /srv/netdisk/netdisk.py --transport tcp --tcp-host 0.0.0.0 --tcp-port 8765
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+启动服务：
+```bash
+sudo systemctl enable netdisk-mcp-server
+sudo systemctl start netdisk-mcp-server
+```
+
+#### 防火墙配置
+
+```bash
+# 开放MCP服务器端口
+sudo ufw allow 8765/tcp
+
+# 或使用iptables
+sudo iptables -A INPUT -p tcp --dport 8765 -j ACCEPT
+```
+
+### 连接状态监控
+
+状态栏显示详细的连接信息：
+
+- **本地模式**：`MCP已连接 (本地) | Calls: 15 | Health: 95%`
+- **SSH模式**：`MCP已连接 (SSH: netdisk@mcp-server.com) | Calls: 15 | Health: 95%`
+- **TCP模式**：`MCP已连接 (TCP: mcp-server.com:8765) | Calls: 15 | Health: 95%`
+- **TLS模式**：`MCP已连接 (TCP: mcp-server.com:8765 🔒) | Calls: 15 | Health: 95%`
+
+### 断线重连
+
+MCP模式支持自动断线重连：
+
+1. **指数退避重连**：2秒、4秒、8秒间隔，最多3次
+2. **重连对话框**：连接失败时显示详细错误信息和重试选项
+3. **连接质量监控**：记录断线次数、重连成功率等指标
+
+### 网络质量监控
+
+MCP模式提供网络质量指标：
+
+- **平均延迟**：网络往返时间（毫秒）
+- **连接断开次数**：连接中断统计
+- **重连成功率**：自动重连成功比例
+- **网络质量评分**：综合网络质量评分（0-100）
+
 ## 版本兼容性
 
 - Python 3.8+

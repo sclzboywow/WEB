@@ -56,6 +56,13 @@ class McpMetrics:
             'last_error': None
         })
         
+        # Network quality metrics
+        self.connection_drops = 0
+        self.reconnect_attempts = 0
+        self.reconnect_success = 0
+        self.network_latency_sum = 0.0
+        self.network_latency_count = 0
+        
         # Session tracking
         self.session_start_time = time.time()
         self.last_call_time = None
@@ -251,6 +258,64 @@ class McpMetrics:
             self.tool_stats.clear()
             self.session_start_time = time.time()
             self.last_call_time = None
+
+    def record_connection_event(self, event_type: str, **kwargs):
+        """
+        Record connection-related events.
+        
+        Args:
+            event_type: Type of event ('drop', 'reconnect_attempt', 'reconnect_success')
+            **kwargs: Additional event data
+        """
+        with self._lock:
+            if event_type == 'drop':
+                self.connection_drops += 1
+            elif event_type == 'reconnect_attempt':
+                self.reconnect_attempts += 1
+            elif event_type == 'reconnect_success':
+                self.reconnect_success += 1
+
+    def record_network_latency(self, latency_ms: float):
+        """
+        Record network latency measurement.
+        
+        Args:
+            latency_ms: Latency in milliseconds
+        """
+        with self._lock:
+            self.network_latency_sum += latency_ms
+            self.network_latency_count += 1
+
+    def get_network_quality(self) -> Dict[str, Any]:
+        """
+        Get network quality metrics.
+        
+        Returns:
+            Dict containing network quality information
+        """
+        with self._lock:
+            avg_latency = (self.network_latency_sum / self.network_latency_count) if self.network_latency_count > 0 else 0.0
+            reconnect_success_rate = (self.reconnect_success / self.reconnect_attempts * 100) if self.reconnect_attempts > 0 else 100.0
+            
+            # Calculate network quality score (0-100)
+            quality_score = 100
+            if avg_latency > 1000:  # > 1 second
+                quality_score -= min(30, (avg_latency - 1000) / 100)
+            if reconnect_success_rate < 80:
+                quality_score -= (80 - reconnect_success_rate) * 0.5
+            if self.connection_drops > 5:
+                quality_score -= min(20, (self.connection_drops - 5) * 2)
+            
+            quality_score = max(0, min(100, quality_score))
+            
+            return {
+                'avg_latency_ms': round(avg_latency, 2),
+                'connection_drops': self.connection_drops,
+                'reconnect_attempts': self.reconnect_attempts,
+                'reconnect_success': self.reconnect_success,
+                'reconnect_success_rate': round(reconnect_success_rate, 1),
+                'quality_score': round(quality_score, 1)
+            }
     
     def get_summary(self) -> str:
         """
