@@ -16,6 +16,9 @@ from PySide6.QtGui import (QStandardItemModel, QStandardItem, QIcon, QFont,
                           QMovie)
 from pan_client.core.utils import get_icon_path
 from pan_client.core.api import ApiClient
+from pan_client.core.abstract_client import AbstractNetdiskClient
+from pan_client.core.client_factory import create_client_with_fallback
+from pan_client.core.mcp_session import McpSession
 from pan_client.ui.widgets.circular_progress_bar import CircularProgressBar
 from pan_client.ui.widgets.material_line_edit import MaterialLineEdit
 from pan_client.ui.widgets.material_button import MaterialButton
@@ -27,14 +30,23 @@ from datetime import datetime
 from pan_client.ui.dialogs.document_viewer import DocumentViewer
 
 class FileManagerUI(QMainWindow):
-    def __init__(self):
+    def __init__(self, client: AbstractNetdiskClient = None, mcp_session: McpSession = None):
         super().__init__()
         
         # 初始化UI相关属性
         self.is_vip = True  # 默认为VIP用户体验，以便启用多选等功能
 
-        # 后端 API 客户端
-        self.api = ApiClient()
+        # 后端客户端 - 支持MCP和REST模式
+        self.client = client or create_client_with_fallback({})
+        self.mcp_session = mcp_session
+        
+        # 为了向后兼容，保留api属性
+        if hasattr(self.client, '_session'):
+            self.api = self.client  # RestNetdiskClient
+        else:
+            # 为MCP客户端创建兼容适配器
+            from pan_client.core.api import RestCompatibilityAdapter
+            self.api = RestCompatibilityAdapter(self.client)
         
         # 初始化用户信息对话框
         self._user_info_dialog = None
@@ -368,6 +380,15 @@ class FileManagerUI(QMainWindow):
         self.status_label.setFont(QFont("Microsoft YaHei", 9))
         self.statusBar.addWidget(self.status_label)
         
+        # 添加MCP状态指示器
+        self.mcp_status_label = QLabel()
+        self.mcp_status_label.setFont(QFont("Microsoft YaHei", 9))
+        self.mcp_status_label.setStyleSheet("color: #666;")
+        self.statusBar.addPermanentWidget(self.mcp_status_label)
+        
+        # 更新MCP状态显示
+        self._update_mcp_status()
+        
         # 添加进度条到状态栏
         self.progress_bar = CircularProgressBar()
         self.progress_bar.setFixedSize(16, 16)  # 调整为更小的尺寸
@@ -423,6 +444,15 @@ class FileManagerUI(QMainWindow):
         self.tray_icon.show()
         self.tray_icon.setToolTip('云栈')
 
+    def _update_mcp_status(self):
+        """更新MCP连接状态显示"""
+        if self.mcp_session and self.mcp_session.is_alive():
+            self.mcp_status_label.setText("MCP已连接")
+            self.mcp_status_label.setStyleSheet("color: #4CAF50;")  # 绿色
+        else:
+            self.mcp_status_label.setText("MCP未连接")
+            self.mcp_status_label.setStyleSheet("color: #F44336;")  # 红色
+
     def _check_version_from_tray(self):
         """从系统托盘触发的版本检查"""
         QMessageBox.information(self, '版本检查', '版本检查功能已移除业务逻辑，仅保留界面。')
@@ -437,6 +467,16 @@ class FileManagerUI(QMainWindow):
             QSystemTrayIcon.Information,
             2000
         )
+
+    def close(self):
+        """重写关闭方法，确保MCP会话正确清理"""
+        try:
+            if self.mcp_session:
+                import asyncio
+                asyncio.run(self.mcp_session.dispose())
+        except Exception as e:
+            print(f"清理MCP会话时出错: {e}")
+        super().close()
 
     def tray_icon_activated(self, reason):
         """处理托盘图标事件"""
@@ -469,7 +509,7 @@ class FileManagerUI(QMainWindow):
         if reply == QMessageBox.Yes:
             try:
                 # 隐藏托盘图标并退出应用
-                    self.tray_icon.hide()
+                self.tray_icon.hide()
                 QApplication.quit()
             except Exception as e:
                 # 记录错误后继续退出
@@ -528,7 +568,7 @@ class FileManagerUI(QMainWindow):
         
         # 创建异步上传工作线程
         self.upload_thread = QThread()
-        self.upload_worker = UploadWorker(self.api, file_paths, target_type, self.current_folder)
+        self.upload_worker = UploadWorker(self.client, file_paths, target_type, self.current_folder)
         self.upload_worker.moveToThread(self.upload_thread)
         
         # 连接信号
@@ -555,7 +595,7 @@ class FileManagerUI(QMainWindow):
         cancelled = result['cancelled']
         
         # 隐藏进度条
-            self.progress_bar.hide()
+        self.progress_bar.hide()
 
         if cancelled:
             self.status_label.setText('上传已取消')
@@ -566,7 +606,7 @@ class FileManagerUI(QMainWindow):
             tip = f'上传成功：{success}/{total}'
             QMessageBox.information(self, '上传完成', tip)
             self.status_label.setText(tip)
-                    else:
+        else:
             detail = '\n'.join([f"{r.get('filename')}: {r.get('error')}" for r in results if not r.get('ok')][:5])
             tip = f'部分失败：成功 {success}，失败 {failed}' + (f"\n{detail}" if detail else '')
             QMessageBox.warning(self, '上传结果', tip)
@@ -607,7 +647,7 @@ class FileManagerUI(QMainWindow):
                 else:
                     item.setTextAlignment(Qt.AlignCenter)
         self.status_label.setText(f"正在搜索：{keyword} …")
-            self.progress_bar.show()
+        self.progress_bar.show()
             
         # 启动并发搜索线程
         self._start_search_threads(keyword)
@@ -623,12 +663,12 @@ class FileManagerUI(QMainWindow):
         class _ServerThread(QThread):
             done = Signal(dict)
             fail = Signal(str)
-            def __init__(self, api: ApiClient, kw: str):
+            def __init__(self, client, kw: str):
                 super().__init__()
-                self.api, self.kw = api, kw
+                self.client, self.kw = client, kw
             def run(self):
                 try:
-                    res = self.api.search_server(self.kw, dir_path='/', recursion=1, page=1, num=200)
+                    res = self.client.search_server(self.kw, dir_path='/', recursion=1, page=1, num=200)
                     self.done.emit(res)
                 except Exception as e:
                     self.fail.emit(str(e))
@@ -637,18 +677,18 @@ class FileManagerUI(QMainWindow):
         class _CacheThread(QThread):
             done = Signal(dict)
             fail = Signal(str)
-            def __init__(self, api: ApiClient, kw: str):
+            def __init__(self, client, kw: str):
                 super().__init__()
-                self.api, self.kw = api, kw
+                self.client, self.kw = client, kw
             def run(self):
                 try:
-                    res = self.api.search_cache(self.kw, path='/', limit=800)
+                    res = self.client.search_cache(self.kw, path='/', limit=800)
                     self.done.emit(res)
-        except Exception as e:
+                except Exception as e:
                     self.fail.emit(str(e))
         
-        self._th_server = _ServerThread(self.api, keyword)
-        self._th_cache = _CacheThread(self.api, keyword)
+        self._th_server = _ServerThread(self.client, keyword)
+        self._th_cache = _CacheThread(self.client, keyword)
         
         self._th_server.done.connect(self._on_server_search_ok)
         self._th_server.fail.connect(self._on_search_fail)
@@ -756,11 +796,17 @@ class FileManagerUI(QMainWindow):
                 info = None
                 try:
                     # 确保当前会话头包含 token，并取回用户信息
-                    self.api.set_local_access_token(token)
-                    info = self.api.get_userinfo()
+                    if hasattr(self.client, 'set_local_access_token'):
+                        self.client.set_local_access_token(token)
+                    else:
+                        self.api.set_local_access_token(token)
+                    info = self.client.get_userinfo()
                     # 将用户信息写回本地账户，便于切换列表显示昵称
                     if info:
-                        self.api.set_local_access_token(token, user=info)
+                        if hasattr(self.client, 'set_local_access_token'):
+                            self.client.set_local_access_token(token, user=info)
+                        else:
+                            self.api.set_local_access_token(token, user=info)
                 except Exception:
                     info = None
                 if info:
@@ -769,7 +815,7 @@ class FileManagerUI(QMainWindow):
                         # 显示账号信息，后续可在对话框内加入账号切换入口
                         dlg = UserInfoDialog(info, self)
                         dlg.exec()
-                    return
+                        return
                     except Exception:
                         # 即使展示失败，也继续走登录逻辑
                         pass
@@ -786,7 +832,7 @@ class FileManagerUI(QMainWindow):
                             idx = items.index(sel)
                             target_id = accts[idx].get('id')
                             if target_id:
-                                if self.api.switch_account(target_id):
+                                if hasattr(self.client, 'switch_account') and self.client.switch_account(target_id):
                                     # 切换后刷新
                                     t_sw = self.api._session.headers.get('Authorization')
                                     if t_sw:
@@ -802,14 +848,17 @@ class FileManagerUI(QMainWindow):
 
         # 未登录或 token 失效：弹出扫码对话框
         from pan_client.ui.login_dialog import LoginDialog
-        dlg = LoginDialog(self)
+        dlg = LoginDialog(self.client, self.mcp_session, self)
         if dlg.exec() == QDialog.Accepted:
             # 刷新会话鉴权头与文件列表
             try:
                 from pan_client.core.token import get_access_token as _ga
                 t2 = _ga()
                 if t2:
-                    self.api.set_local_access_token(t2)
+                    if hasattr(self.client, 'set_local_access_token'):
+                        self.client.set_local_access_token(t2)
+                    else:
+                        self.api.set_local_access_token(t2)
                 self.load_dir(self.current_folder)
                 self.status_label.setText("登录成功，已刷新列表")
             except Exception:
@@ -982,13 +1031,13 @@ class FileManagerUI(QMainWindow):
         self.progress_bar.show()
         self.status_label.setText(f'正在下载：{save_name}')
         # 通过后端代理流式下载，规避403
-        r = self.api.stream_file(int(fsid))
+        r = self.client.stream_file(int(fsid))
         total = int(r.headers.get('Content-Length') or 0)
         downloaded = 0
         with open(target_path, 'wb') as f:
             for chunk in r.iter_content(chunk_size=8192):
                 if not chunk:
-                continue
+                    continue
                 f.write(chunk)
                 if total:
                     downloaded += len(chunk)
@@ -1015,7 +1064,7 @@ class FileManagerUI(QMainWindow):
         
         # 创建异步下载工作线程
         self.download_thread = QThread()
-        self.download_worker = DownloadWorker(self.api, file_list, save_dir)
+        self.download_worker = DownloadWorker(self.client, file_list, save_dir)
         self.download_worker.moveToThread(self.download_thread)
         
         # 连接信号
@@ -1082,7 +1131,7 @@ class FileManagerUI(QMainWindow):
         # 启动读取线程
         try:
             self.read_thread = QThread(self)
-            self.read_worker = SingleReadWorker(self.api, file_info)
+            self.read_worker = SingleReadWorker(self.client, file_info)
             self.read_worker.moveToThread(self.read_thread)
             self.read_thread.started.connect(self.read_worker.run)
             self.read_worker.progress_updated.connect(self._on_read_progress)
@@ -1271,32 +1320,35 @@ class FileManagerUI(QMainWindow):
                         except Exception:
                             pass
                         from pan_client.ui.login_dialog import LoginDialog
-                        dlg = LoginDialog(self)
+                        dlg = LoginDialog(self.client, self.mcp_session, self)
                         if dlg.exec() == QDialog.Accepted:
                             from pan_client.core.token import get_access_token as _ga
                             t2 = _ga()
                             if t2:
-                                self.api.set_local_access_token(t2)
-        else:
-                            raise RuntimeError('用户未登录')
+                                if hasattr(self.client, 'set_local_access_token'):
+                                    self.client.set_local_access_token(t2)
+                                else:
+                                    self.api.set_local_access_token(t2)
+                            else:
+                                raise RuntimeError('用户未登录')
                 except Exception:
                     pass
                 # 仅个人网盘
-                data_user = self.api.list_files(dir_path=dir_path, limit=200, order='time', desc=1)
+                data_user = self.client.list_files(dir_path=dir_path, limit=200, order='time', desc=1)
                 user_files = data_user.get('list', []) if isinstance(data_user, dict) else []
                 self.display_files(user_files)
                 self.status_label.setText(f"已加载（我的网盘）：{dir_path}")
             elif self.view_mode == 'shared':
                 # 仅服务器缓存
-                data_cache = self.api.get_cached_files(path=dir_path, limit=200, offset=0)
+                data_cache = self.client.get_cached_files(path=dir_path, limit=200, offset=0)
                 cache_files = data_cache.get('files', []) if isinstance(data_cache, dict) else []
                 self.display_files(cache_files)
                 self.status_label.setText(f"已加载（共享资源）：{dir_path}")
             else:
                 # 兼容：合并模式
-                data_user = self.api.list_files(dir_path=dir_path, limit=200, order='time', desc=1)
+                data_user = self.client.list_files(dir_path=dir_path, limit=200, order='time', desc=1)
                 user_files = data_user.get('list', []) if isinstance(data_user, dict) else []
-                data_cache = self.api.get_cached_files(path=dir_path, limit=200, offset=0)
+                data_cache = self.client.get_cached_files(path=dir_path, limit=200, offset=0)
                 cache_files = data_cache.get('files', []) if isinstance(data_cache, dict) else []
                 merged = []
                 seen_keys = set()
@@ -1323,15 +1375,18 @@ class FileManagerUI(QMainWindow):
                     pass
                 # 弹出登录框
                 try:
-                    dlg = LoginDialog(self)
+                    dlg = LoginDialog(self.client, self.mcp_session, self)
                     if dlg.exec() == QDialog.Accepted:
                         # 登录成功后重试
                         try:
                             from pan_client.core.token import get_access_token
                             token = get_access_token()
                             if token:
-                                # 更新现有 ApiClient 的鉴权头
-                                self.api.set_local_access_token(token)
+                                # 更新现有客户端的鉴权头
+                                if hasattr(self.client, 'set_local_access_token'):
+                                    self.client.set_local_access_token(token)
+                                else:
+                                    self.api.set_local_access_token(token)
                             self.view_mode = 'mine'
                             self.load_dir(dir_path)
                             return
@@ -1417,7 +1472,7 @@ class FileManagerUI(QMainWindow):
     def update_progress(self, message, percent):
         """更新进度对话框"""
         if hasattr(self, 'loading_dialog'):
-        self.loading_dialog.update_status(message, percent)
+            self.loading_dialog.update_status(message, percent)
         
     def upload_finished(self, success, message, failed_files):
         """上传完成的处理"""
@@ -1696,7 +1751,7 @@ class FileManagerUI(QMainWindow):
                         if QMessageBox.question(self, '确认删除', f'确定删除 {len(paths)} 个文件/文件夹？') != QMessageBox.Yes:
                             return
                         
-                        self.api.delete_files(paths)
+                        self.client.delete_files(paths)
                         self.status_label.setText(f'删除完成 ({len(paths)}个)')
                         self.load_dir(self.current_folder)
                     except Exception as e:
@@ -1739,7 +1794,7 @@ class FileManagerUI(QMainWindow):
         if count == 1:
             filename = file_list[0].get('server_filename') or file_list[0].get('name') or ''
             self.status_label.setText(f'已复制: {filename}')
-                    else:
+        else:
             self.status_label.setText(f'已复制 {count} 个文件/文件夹')
 
     def _cut_multiple(self, file_list):
@@ -1778,7 +1833,7 @@ class FileManagerUI(QMainWindow):
                 return
             
             # 检查文件冲突
-            conflict_response = self.api.check_file_conflicts(items)
+            conflict_response = self.client.check_file_conflicts(items)
             conflicts = conflict_response.get('conflicts', [])
             
             if conflicts:
@@ -1799,11 +1854,11 @@ class FileManagerUI(QMainWindow):
             # 根据操作类型调用不同的API
             if self.clipboard_operation == 'copy':
                 # 复制操作：调用复制API
-                self.api.copy_files(items)
+                self.client.copy_files(items)
                 self.status_label.setText('复制完成')
             else:
                 # 剪切操作：调用移动API
-                self.api.move_files(items)
+                self.client.move_files(items)
                 # 剪切操作完成后清空剪贴板
                 self.clipboard_files = []
                 self.clipboard_operation = None
@@ -1844,7 +1899,7 @@ class FileManagerUI(QMainWindow):
                 return
             
             # 检查文件冲突
-            conflict_response = self.api.check_file_conflicts(items)
+            conflict_response = self.client.check_file_conflicts(items)
             conflicts = conflict_response.get('conflicts', [])
             
             if conflicts:
@@ -1865,12 +1920,12 @@ class FileManagerUI(QMainWindow):
             # 根据操作类型调用不同的API
             if self.clipboard_operation == 'copy':
                 # 复制操作：调用复制API
-                self.api.copy_files(items)
+                self.client.copy_files(items)
                 folder_name = folder_info.get('server_filename') or folder_info.get('name') or ''
                 self.status_label.setText(f'复制到 {folder_name} 完成')
             else:
                 # 剪切操作：调用移动API
-                self.api.move_files(items)
+                self.client.move_files(items)
                 # 剪切操作完成后清空剪贴板
                 self.clipboard_files = []
                 self.clipboard_operation = None
@@ -1915,7 +1970,7 @@ class FileManagerUI(QMainWindow):
                         
                         # 检查新文件名是否也存在冲突
                         new_item = {"path": source_path, "dest": dest_dir}
-                        new_conflict_response = self.api.check_file_conflicts([new_item])
+                        new_conflict_response = self.client.check_file_conflicts([new_item])
                         if not new_conflict_response.get('conflicts'):
                             item['dest'] = dest_dir  # 保持目录不变，让API处理重命名
                             resolved_items.append(item)
@@ -2105,9 +2160,9 @@ class UploadWorker(QObject):
     upload_finished = Signal(dict)  # 上传结果
     error_occurred = Signal(str)  # 错误信息
     
-    def __init__(self, api, file_paths, target_type, current_folder=None):
+    def __init__(self, client, file_paths, target_type, current_folder=None):
         super().__init__()
-        self.api = api
+        self.client = client
         self.file_paths = file_paths
         self.target_type = target_type  # 'shared' 或 'mine'
         self.current_folder = current_folder
@@ -2128,7 +2183,7 @@ class UploadWorker(QObject):
             if self.target_type == 'shared':
                 # 共享资源：批量上传
                 self.progress_updated.emit(10, '正在上传到共享资源...')
-                resp = self.api.upload_to_shared_batch(self.file_paths)
+                resp = self.client.upload_to_shared_batch(self.file_paths)
                 results = (resp or {}).get('results', []) if isinstance(resp, dict) else []
                 success = sum(1 for r in results if r.get('ok'))
                 failed = len(results) - success
@@ -2145,12 +2200,12 @@ class UploadWorker(QObject):
                     
                     try:
                         target_path = (self.current_folder.rstrip('/') + '/' + name) if self.current_folder else None
-                        resp = self.api.upload_to_mine(file_path, target_path=target_path)
+                        resp = self.client.upload_to_mine(file_path, target_path=target_path)
                         
                         if isinstance(resp, dict) and not resp.get('error'):
                             success += 1
                             results.append({'filename': name, 'ok': True, 'path': resp.get('path')})
-                else:
+                        else:
                             failed += 1
                             error_msg = resp.get('error', '未知错误') if isinstance(resp, dict) else str(resp)
                             results.append({'filename': name, 'ok': False, 'error': error_msg})
@@ -2179,9 +2234,9 @@ class DownloadWorker(QObject):
     download_finished = Signal(dict)  # 下载结果
     error_occurred = Signal(str)  # 错误信息
     
-    def __init__(self, api, file_list, save_dir):
+    def __init__(self, client, file_list, save_dir):
         super().__init__()
-        self.api = api
+        self.client = client
         self.file_list = file_list
         self.save_dir = save_dir
         self.is_cancelled = False
@@ -2200,9 +2255,9 @@ class DownloadWorker(QObject):
             
             for i, file_info in enumerate(self.file_list):
                 if self.is_cancelled:
-                break
+                    break
                 
-            try:
+                try:
                     fsid = file_info.get('fs_id') or file_info.get('fsid')
                     if not fsid:
                         failed_count += 1
@@ -2217,19 +2272,19 @@ class DownloadWorker(QObject):
                     self.progress_updated.emit(progress, f'正在下载：{save_name}')
                     
                     # 下载文件
-                    r = self.api.stream_file(int(fsid))
+                    r = self.client.stream_file(int(fsid))
                     with open(target_path, 'wb') as f:
-                                for chunk in r.iter_content(chunk_size=8192):
+                        for chunk in r.iter_content(chunk_size=8192):
                             if self.is_cancelled:
-                                        break
-                                    if chunk:
-                                        f.write(chunk)
+                                break
+                            if chunk:
+                                f.write(chunk)
                         
                     if not self.is_cancelled:
                         success_count += 1
                         results.append({'filename': save_name, 'ok': True, 'path': target_path})
                         
-            except Exception as e:
+                except Exception as e:
                     failed_count += 1
                     results.append({'filename': save_name, 'ok': False, 'error': str(e)})
             
@@ -2253,9 +2308,9 @@ class SingleReadWorker(QObject):
     error_occurred = Signal(str)
     finished = Signal()
 
-    def __init__(self, api, file_info):
+    def __init__(self, client, file_info):
         super().__init__()
-        self.api = api
+        self.client = client
         self.file_info = file_info
 
     def run(self):
@@ -2266,7 +2321,7 @@ class SingleReadWorker(QObject):
             tmp_dir = tempfile.mkdtemp(prefix='docview_')
             local_path = os.path.join(tmp_dir, name)
 
-            r = self.api.stream_file(fsid)
+            r = self.client.stream_file(fsid)
             total = int(r.headers.get('Content-Length') or 0)
             downloaded = 0
             with open(local_path, 'wb') as f:

@@ -8,11 +8,14 @@ except ImportError:
     QRCODE_AVAILABLE = False
 from io import BytesIO
 from pan_client.core.token import get_access_token
+from pan_client.core.abstract_client import AbstractNetdiskClient
+from pan_client.core.mcp_session import McpSession
 
 class LoginDialog(QDialog):
-    def __init__(self, api, parent=None):
+    def __init__(self, client: AbstractNetdiskClient = None, mcp_session: McpSession = None, parent=None):
         super().__init__(parent)
-        self.api = api
+        self.client = client
+        self.mcp_session = mcp_session
         self.setWindowTitle('扫码登录百度网盘')
         self.resize(400, 500)
         
@@ -73,7 +76,13 @@ class LoginDialog(QDialog):
         """获取授权URL并生成二维码"""
         try:
             # 使用简化的授权流程
-            auth_data = self.api.get_simple_auth_url()
+            if self.client:
+                auth_data = self.client.get_simple_auth_url()
+            else:
+                # 向后兼容
+                from pan_client.core.api import ApiClient
+                api = ApiClient()
+                auth_data = api.get_simple_auth_url()
             if auth_data and 'auth_url' in auth_data:
                 auth_url = auth_data['auth_url']
                 
@@ -123,10 +132,22 @@ class LoginDialog(QDialog):
             
         try:
             # 使用授权码换取token
-            token_data = self.api.exchange_code_for_token(code)
+            if self.client:
+                token_data = self.client.exchange_code_for_token(code)
+            else:
+                # 向后兼容
+                from pan_client.core.api import ApiClient
+                api = ApiClient()
+                token_data = api.exchange_code_for_token(code)
             if token_data and 'access_token' in token_data:
                 # 保存token到本地
-                self.api.set_local_access_token(token_data['access_token'])
+                if self.client:
+                    self.client.set_local_access_token(token_data['access_token'])
+                else:
+                    # 向后兼容
+                    from pan_client.core.api import ApiClient
+                    api = ApiClient()
+                    api.set_local_access_token(token_data['access_token'])
                 
                 # 停止轮询
                 self._timer.stop()
