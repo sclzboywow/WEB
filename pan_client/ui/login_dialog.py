@@ -326,7 +326,7 @@ class LoginDialog(QDialog):
         self._logged_in = True
         # 写入多账号存储
         try:
-            from pan_client.core.api import ApiClient
+            from pan_client.core.rest_client import ApiClient
             api = ApiClient()
             token = (user_data or {}).get('access_token') or ''
             user = (user_data or {}).get('user') or {}

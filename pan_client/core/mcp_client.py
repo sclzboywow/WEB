@@ -198,6 +198,163 @@ class McpNetdiskClient(AbstractNetdiskClient):
             logger.error(f"Failed to copy file {src_path} to {dest_path}: {e}")
             raise normalize_error(e) from e
     
+    async def delete_files(self, paths: List[str], **kwargs) -> Dict[str, Any]:
+        """
+        Batch delete files (client-side loop over single file operations).
+        
+        Args:
+            paths: List of file paths to delete
+            **kwargs: Additional parameters
+            
+        Returns:
+            Dict containing batch operation results
+        """
+        try:
+            await self._ensure_initialized()
+            
+            results = []
+            errors = []
+            
+            for path in paths:
+                try:
+                    result = await self.delete_file(path, **kwargs)
+                    results.append({'path': path, 'success': True, 'result': result})
+                    logger.debug(f"Successfully deleted: {path}")
+                except Exception as e:
+                    errors.append({'path': path, 'error': str(e)})
+                    logger.warning(f"Failed to delete {path}: {e}")
+            
+            return {
+                'success': len(errors) == 0,
+                'total': len(paths),
+                'succeeded': len(results),
+                'failed': len(errors),
+                'results': results,
+                'errors': errors
+            }
+            
+        except Exception as e:
+            logger.error(f"Batch delete operation failed: {e}")
+            raise normalize_error(e) from e
+    
+    async def copy_files(self, items: List[Dict[str, str]], ondup: str = 'newcopy', **kwargs) -> Dict[str, Any]:
+        """
+        Batch copy files (client-side loop over single file operations).
+        
+        Args:
+            items: List of dicts with 'path' (source) and 'dest' (destination) keys
+            ondup: Conflict resolution strategy ('newcopy', 'overwrite', 'skip')
+            **kwargs: Additional parameters
+            
+        Returns:
+            Dict containing batch operation results
+        """
+        try:
+            await self._ensure_initialized()
+            
+            results = []
+            errors = []
+            
+            for item in items:
+                src_path = item.get('path')
+                dest_path = item.get('dest')
+                
+                if not src_path or not dest_path:
+                    errors.append({
+                        'item': item,
+                        'error': 'Missing path or dest in item'
+                    })
+                    continue
+                
+                try:
+                    result = await self.copy_file(src_path, dest_path, ondup=ondup, **kwargs)
+                    results.append({
+                        'src': src_path,
+                        'dest': dest_path,
+                        'success': True,
+                        'result': result
+                    })
+                    logger.debug(f"Successfully copied: {src_path} -> {dest_path}")
+                except Exception as e:
+                    errors.append({
+                        'src': src_path,
+                        'dest': dest_path,
+                        'error': str(e)
+                    })
+                    logger.warning(f"Failed to copy {src_path} to {dest_path}: {e}")
+            
+            return {
+                'success': len(errors) == 0,
+                'total': len(items),
+                'succeeded': len(results),
+                'failed': len(errors),
+                'results': results,
+                'errors': errors
+            }
+            
+        except Exception as e:
+            logger.error(f"Batch copy operation failed: {e}")
+            raise normalize_error(e) from e
+    
+    async def move_files(self, items: List[Dict[str, str]], ondup: str = 'newcopy', **kwargs) -> Dict[str, Any]:
+        """
+        Batch move files (client-side loop over single file operations).
+        
+        Args:
+            items: List of dicts with 'path' (source) and 'dest' (destination) keys
+            ondup: Conflict resolution strategy ('newcopy', 'overwrite', 'skip')
+            **kwargs: Additional parameters
+            
+        Returns:
+            Dict containing batch operation results
+        """
+        try:
+            await self._ensure_initialized()
+            
+            results = []
+            errors = []
+            
+            for item in items:
+                src_path = item.get('path')
+                dest_path = item.get('dest')
+                
+                if not src_path or not dest_path:
+                    errors.append({
+                        'item': item,
+                        'error': 'Missing path or dest in item'
+                    })
+                    continue
+                
+                try:
+                    result = await self.move_file(src_path, dest_path, ondup=ondup, **kwargs)
+                    results.append({
+                        'src': src_path,
+                        'dest': dest_path,
+                        'success': True,
+                        'result': result
+                    })
+                    logger.debug(f"Successfully moved: {src_path} -> {dest_path}")
+                except Exception as e:
+                    errors.append({
+                        'src': src_path,
+                        'dest': dest_path,
+                        'error': str(e)
+                    })
+                    logger.warning(f"Failed to move {src_path} to {dest_path}: {e}")
+            
+            return {
+                'success': len(errors) == 0,
+                'total': len(items),
+                'succeeded': len(results),
+                'failed': len(errors),
+                'results': results,
+                'errors': errors
+            }
+            
+        except Exception as e:
+            logger.error(f"Batch move operation failed: {e}")
+            raise normalize_error(e) from e
+    
     async def get_file_info(self, path: str, **kwargs) -> Dict[str, Any]:
         """Get file information using MCP."""
         try:
@@ -245,6 +402,55 @@ class McpNetdiskClient(AbstractNetdiskClient):
             raise normalize_error(e) from e
         except Exception as e:
             logger.error(f"Failed to search files with query '{query}': {e}")
+            raise normalize_error(e) from e
+    
+    async def get_cached_files(self, path: Optional[str] = None, kind: Optional[str] = None, 
+                               limit: Optional[int] = None, offset: int = 0, **kwargs) -> Dict[str, Any]:
+        """
+        Get cached/shared files using MCP.
+        
+        Args:
+            path: Optional path filter
+            kind: Optional file type filter
+            limit: Maximum number of results
+            offset: Result offset for pagination
+            **kwargs: Additional parameters
+            
+        Returns:
+            Dict containing cached file list with __source='shared' marker
+        """
+        try:
+            await self._ensure_initialized()
+            
+            # Build tool parameters
+            tool_params = {'offset': offset}
+            if path is not None:
+                tool_params['path'] = path
+            if kind is not None:
+                tool_params['kind'] = kind
+            if limit is not None:
+                tool_params['limit'] = limit
+            
+            result = await self.mcp_session.invoke_tool(
+                'get_cached_files',
+                **tool_params
+            )
+            
+            # Normalize and mark as shared source
+            if 'list' in result:
+                normalized_files = []
+                for file_data in result['list']:
+                    normalized = normalize_file_info(file_data)
+                    normalized['__source'] = 'shared'
+                    normalized_files.append(normalized)
+                result['list'] = normalized_files
+            
+            return result
+            
+        except McpSessionError as e:
+            raise normalize_error(e) from e
+        except Exception as e:
+            logger.error(f"Failed to get cached files: {e}")
             raise normalize_error(e) from e
     
     async def get_user_info(self, **kwargs) -> Optional[Dict[str, Any]]:

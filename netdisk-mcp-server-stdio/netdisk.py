@@ -2038,6 +2038,82 @@ def get_auth_help() -> Dict[str, Any]:
 
 
 @mcp.tool()
+def get_cached_files(path: Optional[str] = None, kind: Optional[str] = None, 
+                     limit: Optional[int] = 100, offset: int = 0) -> Dict[str, Any]:
+    """
+    获取缓存/共享资源文件列表
+    
+    此工具用于获取共享资源池中的文件，与个人网盘文件分开管理。
+    缓存文件通常来自共享链接转存或其他用户分享的资源。
+    
+    参数:
+    - path: 可选的路径过滤器，例如 "/shared/images"
+    - kind: 可选的文件类型过滤器，例如 "image", "video", "document"
+    - limit: 返回结果的最大数量，默认100
+    - offset: 分页偏移量，默认0
+    
+    返回:
+    - 包含缓存文件列表的字典，每个文件项会包含 __source='shared' 标记
+    
+    注意:
+    - 此功能当前通过list_files实现，未来可能会连接到独立的共享资源数据库
+    - 返回的文件会自动标记为共享来源
+    """
+    try:
+        # 当前实现：使用list_files获取特定路径的文件
+        # 默认使用 "/shared" 或 "/" 作为共享资源根目录
+        search_path = path if path else "/shared"
+        
+        result = list_files(path=search_path, start=offset, limit=limit or 100)
+        
+        if result.get("status") == "success" and "list" in result:
+            # 标记所有文件为共享来源
+            for file_item in result["list"]:
+                file_item["__source"] = "shared"
+            
+            # 如果指定了kind过滤器，进行文件类型过滤
+            if kind:
+                filtered_files = []
+                for file_item in result["list"]:
+                    file_category = file_item.get("category", "")
+                    # 简单的类型映射
+                    category_map = {
+                        "image": ["1", "image"],
+                        "video": ["2", "video"],
+                        "audio": ["3", "audio"],
+                        "document": ["4", "doc", "document"],
+                        "archive": ["5", "archive"],
+                        "torrent": ["6", "torrent"],
+                        "application": ["7", "app", "application"]
+                    }
+                    
+                    if kind.lower() in category_map:
+                        valid_categories = category_map[kind.lower()]
+                        if any(str(file_category) in cat or cat in str(file_category).lower() 
+                               for cat in valid_categories):
+                            filtered_files.append(file_item)
+                    else:
+                        # 如果kind不在映射中，直接比较
+                        if str(file_category).lower() == kind.lower():
+                            filtered_files.append(file_item)
+                
+                result["list"] = filtered_files
+                result["filtered_count"] = len(filtered_files)
+            
+            result["source"] = "shared"
+            result["offset"] = offset
+            result["limit"] = limit
+        
+        return result
+        
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"获取缓存文件列表失败: {str(e)}"
+        }
+
+
+@mcp.tool()
 def get_rate_limit_status(api_type: str = None) -> Dict[str, Any]:
     """
     获取API调用频率限制状态

@@ -15,7 +15,7 @@ from PySide6.QtGui import (QStandardItemModel, QStandardItem, QIcon, QFont,
                           QColor, QPainter, QPen, QPainterPath, QBrush, QPixmap,
                           QMovie)
 from pan_client.core.utils import get_icon_path
-from pan_client.core.api import ApiClient
+from pan_client.core.rest_client import ApiClient
 from pan_client.core.abstract_client import AbstractNetdiskClient
 from pan_client.core.client_factory import create_client_with_fallback
 from pan_client.core.mcp_session import McpSession
@@ -45,7 +45,7 @@ class FileManagerUI(QMainWindow):
             self.api = self.client  # RestNetdiskClient
         else:
             # 为MCP客户端创建兼容适配器
-            from pan_client.core.api import RestCompatibilityAdapter
+            from pan_client.core.rest_client import RestCompatibilityAdapter
             self.api = RestCompatibilityAdapter(self.client)
         
         # 初始化用户信息对话框

@@ -11,7 +11,7 @@ import logging
 from typing import Any, Dict, Optional
 
 from .abstract_client import AbstractNetdiskClient
-from .api import RestNetdiskClient
+from .rest_client import RestNetdiskClient
 from .mcp_client import McpNetdiskClient
 
 logger = logging.getLogger(__name__)

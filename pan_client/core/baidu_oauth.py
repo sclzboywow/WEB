@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 from PySide6.QtCore import QObject, Signal, QTimer, QThread, Qt
 from PySide6.QtGui import QPixmap, QPainter, QPen, QBrush, QImage
 from PySide6.QtWidgets import QApplication
-from pan_client.core.api import ApiClient
+from pan_client.core.rest_client import ApiClient
 from pan_client.core.abstract_client import AbstractNetdiskClient
 
 

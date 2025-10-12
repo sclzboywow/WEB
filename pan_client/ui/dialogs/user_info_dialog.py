@@ -4,7 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon, QFont
 from typing import Dict, Any, Optional
 from pan_client.core.utils import get_icon_path
-from pan_client.core.api import ApiClient
+from pan_client.core.rest_client import ApiClient
 from pan_client.core.token import list_accounts, migrate_accounts
 from pan_client.ui.login_dialog import LoginDialog
 

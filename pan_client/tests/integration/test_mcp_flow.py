@@ -190,6 +190,154 @@ class TestFileOperations:
     """测试文件操作流程"""
     
     @pytest.mark.asyncio
+    async def test_file_management_flow(self):
+        """测试完整文件管理流程：列举-上传-下载-删除"""
+        # 创建临时文件
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.txt') as f:
+            f.write(b"test content for flow")
+            temp_file = f.name
+        
+        try:
+            # 模拟MCP会话
+            mock_session = MagicMock()
+            mock_session.is_alive.return_value = True
+            
+            config = {"transport": {"mode": "mcp"}}
+            client = McpNetdiskClient(config)
+            client.mcp_session = mock_session
+            client._is_initialized = True
+            
+            # 1. 列举初始文件
+            mock_session.invoke_tool = MagicMock(return_value={
+                "status": "success",
+                "list": [
+                    {"server_filename": "existing.txt", "fs_id": "111", "size": 100, "isdir": 0}
+                ]
+            })
+            
+            initial = await client.list_files("/")
+            assert "list" in initial
+            initial_count = len(initial["list"])
+            assert initial_count == 1
+            
+            # 2. 上传临时文件
+            mock_session.invoke_tool = MagicMock(return_value={
+                "status": "success",
+                "path": "/uploaded_test.txt",
+                "fs_id": "222"
+            })
+            
+            upload_result = await client.upload_file(temp_file, "/")
+            assert upload_result.get("status") == "success"
+            uploaded_path = upload_result.get("path")
+            assert uploaded_path == "/uploaded_test.txt"
+            
+            # 3. 确认列表增加
+            mock_session.invoke_tool = MagicMock(return_value={
+                "status": "success",
+                "list": [
+                    {"server_filename": "existing.txt", "fs_id": "111", "size": 100, "isdir": 0},
+                    {"server_filename": "uploaded_test.txt", "fs_id": "222", "size": 20, "isdir": 0}
+                ]
+            })
+            
+            after_upload = await client.list_files("/")
+            assert len(after_upload["list"]) == initial_count + 1
+            
+            # 4. 下载并校验
+            mock_session.invoke_tool = MagicMock(return_value={
+                "status": "success",
+                "local_path": "/tmp/downloaded_test.txt"
+            })
+            
+            with tempfile.TemporaryDirectory() as temp_dir:
+                download_path = os.path.join(temp_dir, "downloaded.txt")
+                download_result = await client.download_file(uploaded_path, download_path)
+                assert download_result is not None
+            
+            # 5. 删除并验证回滚
+            mock_session.invoke_tool = MagicMock(return_value={
+                "status": "success",
+                "message": "文件删除成功"
+            })
+            
+            delete_result = await client.delete_file(uploaded_path)
+            assert delete_result.get("status") == "success"
+            
+            # 验证列表恢复
+            mock_session.invoke_tool = MagicMock(return_value={
+                "status": "success",
+                "list": [
+                    {"server_filename": "existing.txt", "fs_id": "111", "size": 100, "isdir": 0}
+                ]
+            })
+            
+            final = await client.list_files("/")
+            assert len(final["list"]) == initial_count
+            
+        finally:
+            # 清理临时文件
+            if os.path.exists(temp_file):
+                os.unlink(temp_file)
+    
+    @pytest.mark.asyncio
+    async def test_batch_operations_flow(self):
+        """测试批量操作流程"""
+        # 模拟MCP会话
+        mock_session = MagicMock()
+        mock_session.is_alive.return_value = True
+        
+        config = {"transport": {"mode": "mcp"}}
+        client = McpNetdiskClient(config)
+        client.mcp_session = mock_session
+        client._is_initialized = True
+        
+        # 模拟单文件删除成功
+        mock_session.invoke_tool = MagicMock(return_value={
+            "status": "success",
+            "message": "删除成功"
+        })
+        
+        # 测试批量删除
+        paths = ["/file1.txt", "/file2.txt", "/file3.txt"]
+        result = await client.delete_files(paths)
+        
+        assert result["success"] is True
+        assert result["total"] == 3
+        assert result["succeeded"] == 3
+        assert result["failed"] == 0
+        
+    @pytest.mark.asyncio
+    async def test_cached_files_flow(self):
+        """测试缓存文件列表流程"""
+        # 模拟MCP会话
+        mock_session = MagicMock()
+        mock_session.is_alive.return_value = True
+        
+        config = {"transport": {"mode": "mcp"}}
+        client = McpNetdiskClient(config)
+        client.mcp_session = mock_session
+        client._is_initialized = True
+        
+        # 模拟get_cached_files工具返回
+        mock_session.invoke_tool = MagicMock(return_value={
+            "status": "success",
+            "list": [
+                {"server_filename": "shared1.txt", "fs_id": "333", "size": 200, "isdir": 0},
+                {"server_filename": "shared2.txt", "fs_id": "444", "size": 300, "isdir": 0}
+            ],
+            "source": "shared"
+        })
+        
+        result = await client.get_cached_files(path="/shared", limit=100)
+        
+        assert "list" in result
+        assert len(result["list"]) == 2
+        # 验证所有文件都标记为shared来源
+        for file_item in result["list"]:
+            assert file_item.get("__source") == "shared"
+    
+    @pytest.mark.asyncio
     async def test_file_upload_flow(self):
         """测试文件上传流程"""
         # 创建临时文件

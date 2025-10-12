@@ -80,7 +80,7 @@ class LoginDialog(QDialog):
                 auth_data = self.client.get_simple_auth_url()
             else:
                 # 向后兼容
-                from pan_client.core.api import ApiClient
+                from pan_client.core.rest_client import ApiClient
                 api = ApiClient()
                 auth_data = api.get_simple_auth_url()
             if auth_data and 'auth_url' in auth_data:
@@ -136,7 +136,7 @@ class LoginDialog(QDialog):
                 token_data = self.client.exchange_code_for_token(code)
             else:
                 # 向后兼容
-                from pan_client.core.api import ApiClient
+                from pan_client.core.rest_client import ApiClient
                 api = ApiClient()
                 token_data = api.exchange_code_for_token(code)
             if token_data and 'access_token' in token_data:
@@ -145,7 +145,7 @@ class LoginDialog(QDialog):
                     self.client.set_local_access_token(token_data['access_token'])
                 else:
                     # 向后兼容
-                    from pan_client.core.api import ApiClient
+                    from pan_client.core.rest_client import ApiClient
                     api = ApiClient()
                     api.set_local_access_token(token_data['access_token'])
                 
