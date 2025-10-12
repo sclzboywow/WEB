@@ -14,6 +14,8 @@ import os
 import shutil
 import subprocess
 import sys
+import time
+import threading
 from contextlib import AsyncExitStack
 from pathlib import Path
 from typing import Any, Dict, Optional, List
@@ -31,6 +33,21 @@ class McpSessionError(Exception):
 
 class McpSessionNotStartedError(McpSessionError):
     """Raised when trying to use MCP session before it's started."""
+    pass
+
+
+class McpTimeoutError(McpSessionError):
+    """Raised when MCP tool call times out."""
+    pass
+
+
+class McpRateLimitError(McpSessionError):
+    """Raised when MCP rate limit is exceeded."""
+    pass
+
+
+class McpAuthError(McpSessionError):
+    """Raised when MCP authentication fails."""
     pass
 
 
@@ -55,6 +72,10 @@ class McpSession:
         self._exit_stack: Optional[AsyncExitStack] = None
         self._process: Optional[subprocess.Popen] = None
         self._is_started = False
+        
+        # Event loop for thread-safe operations
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._loop_thread: Optional[threading.Thread] = None
         
         # Extract configuration
         self.stdio_binary = self.mcp_config.get('stdio_binary', 'python')
@@ -87,6 +108,41 @@ class McpSession:
         
         logger.debug(f"Environment setup complete. Download dir: {download_dir}")
     
+    def run_in_loop(self, coro):
+        """
+        Run a coroutine in the MCP event loop from a synchronous thread.
+        
+        Args:
+            coro: Coroutine to run
+            
+        Returns:
+            Result of the coroutine
+            
+        Raises:
+            McpSessionNotStartedError: If event loop not started
+        """
+        if not self._loop:
+            raise McpSessionNotStartedError("Event loop not started")
+        
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        return future.result(timeout=30)
+    
+    def _start_event_loop_thread(self) -> None:
+        """Start the event loop in a separate thread."""
+        def run_loop():
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            self._loop.run_forever()
+        
+        self._loop_thread = threading.Thread(target=run_loop, daemon=True)
+        self._loop_thread.start()
+        
+        # Wait for loop to be ready
+        while self._loop is None:
+            time.sleep(0.01)
+        
+        logger.info("MCP event loop thread started")
+    
     async def ensure_started(self) -> None:
         """
         Ensure MCP session is started.
@@ -97,6 +153,9 @@ class McpSession:
             return
         
         try:
+            # Start event loop thread first
+            if not self._loop:
+                self._start_event_loop_thread()
             # Resolve entry point path
             entry_path = Path(self.entry_point)
             if not entry_path.is_absolute():
@@ -145,6 +204,27 @@ class McpSession:
             await self.dispose()
             raise McpSessionError(f"Failed to start MCP session: {e}") from e
     
+    def _map_mcp_error(self, error: Exception) -> McpSessionError:
+        """
+        Map MCP tool errors to specific exception types.
+        
+        Args:
+            error: Original error
+            
+        Returns:
+            Mapped exception
+        """
+        error_str = str(error).lower()
+        
+        if 'timeout' in error_str or 'timed out' in error_str:
+            return McpTimeoutError(f"Tool call timed out: {error}")
+        elif 'rate limit' in error_str or 'rate_limit' in error_str or '429' in error_str:
+            return McpRateLimitError(f"Rate limit exceeded: {error}")
+        elif 'unauthorized' in error_str or 'auth' in error_str or '401' in error_str:
+            return McpAuthError(f"Authentication failed: {error}")
+        else:
+            return McpSessionError(f"MCP tool error: {error}")
+    
     async def invoke_tool(self, name: str, **kwargs) -> Dict[str, Any]:
         """
         Invoke an MCP tool and return results.
@@ -163,18 +243,21 @@ class McpSession:
         if not self._is_started or not self._session:
             raise McpSessionNotStartedError("MCP session not started")
         
+        start_time = time.time()
+        logger.info(f"Invoking MCP tool: {name}, args: {list(kwargs.keys())}")
+        
         try:
-            logger.debug(f"Invoking MCP tool: {name} with args: {kwargs}")
-            
             # Call the tool
             result = await self._session.call_tool(name, kwargs)
             
-            logger.debug(f"MCP tool {name} completed successfully")
+            duration = time.time() - start_time
+            logger.info(f"MCP tool {name} completed in {duration:.2f}s")
             return result
             
         except Exception as e:
-            logger.error(f"MCP tool {name} failed: {e}")
-            raise McpSessionError(f"Tool {name} invocation failed: {e}") from e
+            duration = time.time() - start_time
+            logger.error(f"MCP tool {name} failed after {duration:.2f}s: {e}")
+            raise self._map_mcp_error(e)
     
     async def dispose(self) -> None:
         """Clean shutdown of MCP session."""
@@ -194,7 +277,17 @@ class McpSession:
                     self._process.wait()
                 self._process = None
             
+            # Stop event loop
+            if self._loop and not self._loop.is_closed():
+                self._loop.call_soon_threadsafe(self._loop.stop)
+            
+            # Wait for loop thread to finish
+            if self._loop_thread and self._loop_thread.is_alive():
+                self._loop_thread.join(timeout=5)
+            
             self._session = None
+            self._loop = None
+            self._loop_thread = None
             self._is_started = False
             
             logger.info("MCP session disposed successfully")

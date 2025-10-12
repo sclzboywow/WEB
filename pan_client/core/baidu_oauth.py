@@ -9,12 +9,16 @@ import hashlib
 import hmac
 import base64
 import urllib.parse
+import logging
 from typing import Dict, Optional, Tuple
 import requests
+
+logger = logging.getLogger(__name__)
 from PySide6.QtCore import QObject, Signal, QTimer, QThread, Qt
 from PySide6.QtGui import QPixmap, QPainter, QPen, QBrush, QImage
 from PySide6.QtWidgets import QApplication
 from pan_client.core.api import ApiClient
+from pan_client.core.abstract_client import AbstractNetdiskClient
 
 
 class BaiduOAuthClient(QObject):
@@ -26,11 +30,13 @@ class BaiduOAuthClient(QObject):
     login_failed = Signal(str)  # 登录失败
     status_changed = Signal(str)  # 状态变化
     
-    def __init__(self, client_id: str, client_secret: str, redirect_uri: str):
+    def __init__(self, client_id: str, client_secret: str, redirect_uri: str, 
+                 client: Optional[AbstractNetdiskClient] = None):
         super().__init__()
         self.client_id = client_id
         self.client_secret = client_secret
         self.redirect_uri = redirect_uri
+        self._transport_client = client  # 注入的客户端
         
         # OAuth相关URL
         self.auth_url = "https://openapi.baidu.com/oauth/2.0/authorize"
@@ -54,6 +60,16 @@ class BaiduOAuthClient(QObject):
         self.poll_start_time = 0
         # 防止重复成功/失败回调
         self._completed = False
+    
+    def set_transport_client(self, client: AbstractNetdiskClient):
+        """
+        Set transport client for OAuth operations.
+        
+        Args:
+            client: AbstractNetdiskClient instance
+        """
+        self._transport_client = client
+        logger.info("Transport client set for OAuth operations")
         
     def generate_state(self) -> str:
         """生成state参数用于防CSRF攻击"""
@@ -193,49 +209,41 @@ class BaiduOAuthClient(QObject):
                 self.login_failed.emit("登录超时，请重新扫码")
                 return
             
-            # 从服务器查询是否已兑换到 token
-            import os, json as _json
-            base_url = None
+            # 使用注入的客户端或创建临时REST客户端
+            client = self._transport_client or ApiClient()
+            
             try:
-                conf_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'config.json')
-                with open(conf_path, 'r', encoding='utf-8') as f:
-                    base_url = _json.load(f).get('base_url')
-            except Exception:
-                base_url = None
-            if base_url:
-                try:
-                    # 使用按 state 轮询接口，避免多个账号互相覆盖
-                    poll_url = base_url.rstrip('/') + '/auth/token/poll'
-                    resp = requests.get(poll_url, params={'state': self.state}, timeout=5)
-                    if resp.status_code == 200:
-                        data = resp.json() or {}
-                        # 仅接受在本次扫码开始之后生成的 token，防止历史 token 导致“未扫码即登录”
-                        created_at = int(data.get('created_at') or 0)
-                        poll_start_sec = int(self.poll_start_time / 1000)
-                        if created_at >= (poll_start_sec - 3):  # 允许少量时间偏差
-                            self.access_token = data.get('access_token')
-                            self.refresh_token = data.get('refresh_token')
-                            # 保存到本地并尝试补充用户信息，防止覆盖旧账号
+                # 调用统一接口获取最新token
+                result = client.fetch_latest_server_token()
+                if result and result.get('access_token'):
+                    data = result
+                    # 仅接受在本次扫码开始之后生成的 token，防止历史 token 导致"未扫码即登录"
+                    created_at = int(data.get('created_at') or 0)
+                    poll_start_sec = int(self.poll_start_time / 1000)
+                    if created_at >= (poll_start_sec - 3):  # 允许少量时间偏差
+                        self.access_token = data.get('access_token')
+                        self.refresh_token = data.get('refresh_token')
+                        # 保存到本地并尝试补充用户信息，防止覆盖旧账号
+                        try:
+                            # 直接用本次 access_token 获取 userinfo，避免被会话头污染
                             try:
-                                api = ApiClient()
-                                # 直接用本次 access_token 获取 userinfo，避免被会话头污染
-                                try:
-                                    info = api.get_userinfo_with_token(self.access_token or '') or {}
-                                except Exception:
-                                    info = {}
-                                if info:
-                                    # 用 uk/userid 作为账号ID 重新写入并设为当前
-                                    account_id = str(info.get('uk') or info.get('userid') or 'default')
-                                    api.set_local_access_token(self.access_token or '', account_id=account_id, user=info)
+                                info = client.get_userinfo_with_token(self.access_token or '') or {}
                             except Exception:
-                                pass
-                            self._stop_polling()
-                            self._completed = True
-                            self.status_changed.emit("授权成功，已获取令牌")
-                            self.login_success.emit(data)
-                            return
-                except Exception:
-                    pass
+                                info = {}
+                            if info:
+                                # 用 uk/userid 作为账号ID 重新写入并设为当前
+                                account_id = str(info.get('uk') or info.get('userid') or 'default')
+                                client.set_local_access_token(self.access_token or '', account_id=account_id, user=info)
+                        except Exception:
+                            pass
+                        self._stop_polling()
+                        self._completed = True
+                        self.status_changed.emit("授权成功，已获取令牌")
+                        self.login_success.emit(data)
+                        return
+            except Exception as e:
+                logger.debug(f"Polling failed: {e}")
+                pass
 
             # 未完成则继续等待
             self.status_changed.emit("等待用户扫码授权...")

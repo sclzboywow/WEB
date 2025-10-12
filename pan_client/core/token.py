@@ -1,8 +1,40 @@
 import os
 import json
+import logging
 from typing import Optional, Dict, Any, List
 
+logger = logging.getLogger(__name__)
+
 _TOKEN_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'token.json')
+
+# Module-level MCP session reference
+_MCP_SESSION: Optional['McpSession'] = None
+
+
+def configure_mcp_session(session: 'McpSession'):
+    """
+    Configure MCP session for token management.
+    
+    Args:
+        session: McpSession instance to use for token operations
+    """
+    global _MCP_SESSION
+    _MCP_SESSION = session
+    logger.info("MCP session configured for token management")
+
+
+def _cache_token_locally(token: str, account_id: Optional[str] = None, user: Optional[Dict[str, Any]] = None):
+    """Cache token locally without syncing to MCP."""
+    store = _load_store()
+    if not account_id:
+        account_id = str((user or {}).get('uk') or (user or {}).get('userid') or store.get('current') or 'default')
+    
+    acc = store.setdefault('accounts', {}).get(account_id) or {}
+    acc['access_token'] = token
+    if user:
+        acc['user'] = user
+    store['accounts'][account_id] = acc
+    _save_store(store)
 
 
 # -------------------- 基础读写 --------------------
@@ -63,6 +95,21 @@ def save_token(data: Dict[str, Any]) -> None:
 
 
 def get_access_token(account_id: Optional[str] = None) -> Optional[str]:
+    """Get access token, prioritizing MCP server over local cache."""
+    # Try MCP first if available
+    if _MCP_SESSION and _MCP_SESSION.is_alive():
+        try:
+            result = _MCP_SESSION.run_in_loop(
+                _MCP_SESSION.invoke_tool('get_current_token', account_id=account_id)
+            )
+            if result and result.get('access_token'):
+                # Sync to local cache
+                _cache_token_locally(result['access_token'], account_id, result.get('user'))
+                return result['access_token']
+        except Exception as e:
+            logger.warning(f"Failed to get token from MCP: {e}, falling back to local")
+    
+    # Fallback to local JSON
     store = _load_store()
     account_id = account_id or store.get('current')
     if not account_id:
@@ -72,8 +119,9 @@ def get_access_token(account_id: Optional[str] = None) -> Optional[str]:
 
 
 def set_access_token(token: str, account_id: Optional[str] = None, user: Optional[Dict[str, Any]] = None) -> None:
+    """Set access token, syncing to both local cache and MCP server."""
+    # Save to local first
     store = _load_store()
-    # 默认账户 id
     if not account_id:
         account_id = str((user or {}).get('uk') or (user or {}).get('userid') or store.get('current') or 'default')
     acc = store.setdefault('accounts', {}).get(account_id) or {}
@@ -83,6 +131,18 @@ def set_access_token(token: str, account_id: Optional[str] = None, user: Optiona
     store['accounts'][account_id] = acc
     store['current'] = account_id
     _save_store(store)
+    
+    # Sync to MCP if available
+    if _MCP_SESSION and _MCP_SESSION.is_alive():
+        try:
+            _MCP_SESSION.run_in_loop(
+                _MCP_SESSION.invoke_tool('set_access_token', 
+                                       access_token=token,
+                                       account_id=account_id,
+                                       user=user)
+            )
+        except Exception as e:
+            logger.warning(f"Failed to sync token to MCP: {e}")
 
 
 def clear_token(account_id: Optional[str] = None) -> None:
@@ -116,10 +176,22 @@ def upsert_account(account_id: str, access_token: str, user: Optional[Dict[str, 
 
 
 def switch_account(account_id: str) -> bool:
+    """Switch to different account, syncing to MCP if available."""
+    # Update local first
     store = _load_store()
     if account_id in store.get('accounts', {}):
         store['current'] = account_id
         _save_store(store)
+        
+        # Sync to MCP if available
+        if _MCP_SESSION and _MCP_SESSION.is_alive():
+            try:
+                _MCP_SESSION.run_in_loop(
+                    _MCP_SESSION.invoke_tool('switch_account', account_id=account_id)
+                )
+            except Exception as e:
+                logger.warning(f"Failed to sync account switch to MCP: {e}")
+        
         return True
     return False
 
@@ -136,6 +208,19 @@ def remove_account(account_id: str) -> bool:
 
 
 def list_accounts() -> List[Dict[str, Any]]:
+    """List accounts, prioritizing MCP server over local cache."""
+    # Try MCP first if available
+    if _MCP_SESSION and _MCP_SESSION.is_alive():
+        try:
+            result = _MCP_SESSION.run_in_loop(
+                _MCP_SESSION.invoke_tool('list_accounts')
+            )
+            if result and result.get('accounts'):
+                return result['accounts']
+        except Exception as e:
+            logger.warning(f"Failed to get accounts from MCP: {e}, falling back to local")
+    
+    # Fallback to local JSON
     store = _load_store()
     current = store.get('current')
     results: List[Dict[str, Any]] = []
