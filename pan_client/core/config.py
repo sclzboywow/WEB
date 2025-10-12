@@ -160,6 +160,89 @@ def get_full_config() -> Dict[str, Any]:
     return merged
 
 
+def get_logging_config() -> Dict[str, Any]:
+    """
+    Get logging configuration.
+    
+    Returns:
+        Dictionary containing logging settings
+    """
+    config = load_config()
+    return config.get('logging', {
+        'level': 'INFO',
+        'format': 'text',  # 'text' or 'json'
+        'file': None,  # Optional log file path
+        'mcp_debug': False  # Enable detailed MCP logging
+    })
+
+
+def get_mcp_logging_config() -> Dict[str, Any]:
+    """
+    Get MCP-specific logging configuration.
+    
+    Returns:
+        Dictionary containing MCP logging settings
+    """
+    logging_config = get_logging_config()
+    return {
+        'level': logging_config.get('level', 'INFO'),
+        'format': logging_config.get('format', 'text'),
+        'debug': logging_config.get('mcp_debug', False),
+        'file': logging_config.get('file')
+    }
+
+
+def setup_logging() -> None:
+    """
+    Setup logging configuration based on config file.
+    """
+    config = get_logging_config()
+    
+    # Set logging level
+    level = getattr(logging, config['level'].upper(), logging.INFO)
+    logging.basicConfig(level=level)
+    
+    # Configure MCP logger specifically
+    mcp_logger = logging.getLogger('pan_client.core.mcp_session')
+    mcp_config = get_mcp_logging_config()
+    
+    if mcp_config['debug']:
+        mcp_logger.setLevel(logging.DEBUG)
+    else:
+        mcp_logger.setLevel(logging.INFO)
+    
+    # Set up formatter
+    if config['format'] == 'json':
+        import json
+        class JsonFormatter(logging.Formatter):
+            def format(self, record):
+                log_entry = {
+                    'timestamp': self.formatTime(record),
+                    'level': record.levelname,
+                    'logger': record.name,
+                    'message': record.getMessage(),
+                }
+                if hasattr(record, 'extra') and record.extra:
+                    log_entry.update(record.extra)
+                return json.dumps(log_entry, ensure_ascii=False)
+        
+        formatter = JsonFormatter()
+    else:
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+    
+    # Apply formatter to handlers
+    for handler in logging.root.handlers:
+        handler.setFormatter(formatter)
+    
+    # Configure file logging if specified
+    if config['file']:
+        file_handler = logging.FileHandler(config['file'], encoding='utf-8')
+        file_handler.setFormatter(formatter)
+        logging.root.addHandler(file_handler)
+
+
 def clear_config_cache() -> None:
     """Clear the configuration cache."""
     global _CONFIG_CACHE

@@ -13,5 +13,11 @@
     "requests_per_minute": 20,
     "burst_size": 5
   },
-  "timeout": 15
+  "timeout": 15,
+  "logging": {
+    "level": "INFO",
+    "format": "text",
+    "file": null,
+    "mcp_debug": false
+  }
 } 

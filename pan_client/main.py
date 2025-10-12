@@ -11,15 +11,12 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from PySide6.QtWidgets import QApplication
 from pan_client.ui.modern_pan import FileManagerUI
-from pan_client.core.config import get_full_config, is_mcp_mode
+from pan_client.core.config import get_full_config, is_mcp_mode, setup_logging
 from pan_client.core.client_factory import create_client_with_fallback
 from pan_client.core.abstract_client import AbstractNetdiskClient
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Configure logging using config file
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # Global client instance for cleanup

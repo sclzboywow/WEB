@@ -88,6 +88,11 @@ class FileManagerUI(QMainWindow):
         # 连接滚动信号
         self.file_tree.verticalScrollBar().valueChanged.connect(self.check_scroll_position)
         
+        # 设置MCP状态更新定时器
+        self.mcp_status_timer = QTimer()
+        self.mcp_status_timer.timeout.connect(self._update_mcp_status)
+        self.mcp_status_timer.start(5000)  # 每5秒更新一次
+        
     def generate_machine_code(self):
         """生成机器码（演示用）"""
         return "DEMO-MACHINE-CODE-12345"
@@ -447,8 +452,32 @@ class FileManagerUI(QMainWindow):
     def _update_mcp_status(self):
         """更新MCP连接状态显示"""
         if self.mcp_session and self.mcp_session.is_alive():
-            self.mcp_status_label.setText("MCP已连接")
-            self.mcp_status_label.setStyleSheet("color: #4CAF50;")  # 绿色
+            try:
+                # 获取MCP指标
+                metrics = self.mcp_session.get_metrics()
+                summary = self.mcp_session.get_metrics_summary()
+                
+                # 构建状态文本
+                if metrics['call_count'] > 0:
+                    status_text = f"MCP已连接 | {summary}"
+                    # 根据健康度设置颜色
+                    if metrics['health_score'] >= 80:
+                        color = "#4CAF50"  # 绿色 - 健康
+                    elif metrics['health_score'] >= 60:
+                        color = "#FF9800"  # 橙色 - 警告
+                    else:
+                        color = "#F44336"  # 红色 - 不健康
+                else:
+                    status_text = "MCP已连接"
+                    color = "#4CAF50"  # 绿色
+                
+                self.mcp_status_label.setText(status_text)
+                self.mcp_status_label.setStyleSheet(f"color: {color};")
+                
+            except Exception as e:
+                # 如果获取指标失败，显示基本状态
+                self.mcp_status_label.setText("MCP已连接")
+                self.mcp_status_label.setStyleSheet("color: #4CAF50;")
         else:
             self.mcp_status_label.setText("MCP未连接")
             self.mcp_status_label.setStyleSheet("color: #F44336;")  # 红色

@@ -227,30 +227,215 @@ async def process_files():
 
 ### 1. 状态监控
 
-UI界面显示MCP连接状态：
-- 绿色：MCP已连接
-- 红色：MCP未连接
+UI界面显示MCP连接状态和实时指标：
+- **绿色**：MCP已连接且健康（健康度 ≥ 80%）
+- **橙色**：MCP已连接但警告（健康度 60-79%）
+- **红色**：MCP未连接或不健康（健康度 < 60%）
 
-### 2. 日志记录
-
-启用调试日志：
-```bash
-python main.py --debug
+状态栏显示格式：
+```
+MCP已连接 | 调用: 15 | 错误: 1 (6.7%) | 平均: 0.123s | 健康: 93%
 ```
 
-日志级别：
-- `DEBUG`: 详细调试信息
-- `INFO`: 一般信息
-- `WARNING`: 警告信息
-- `ERROR`: 错误信息
+### 2. 结构化日志记录
 
-### 3. 性能指标
+#### 启用详细日志
 
-MCP模式提供以下性能指标：
-- 连接延迟
-- 操作响应时间
-- 错误率统计
-- 吞吐量监控
+编辑 `config.json` 文件：
+```json
+{
+  "logging": {
+    "level": "DEBUG",
+    "format": "json",
+    "file": "mcp.log",
+    "mcp_debug": true
+  }
+}
+```
+
+#### 日志格式
+
+**文本格式**（默认）：
+```
+2024-01-15 10:30:45 - pan_client.core.mcp_session - INFO - MCP tool invocation started - tool: list_files, params_count: 2, timestamp: 1705290645.123
+```
+
+**JSON格式**：
+```json
+{
+  "timestamp": "2024-01-15 10:30:45",
+  "level": "INFO",
+  "logger": "pan_client.core.mcp_session",
+  "message": "MCP tool invocation started",
+  "tool": "list_files",
+  "params_count": 2,
+  "timestamp": 1705290645.123
+}
+```
+
+#### 日志级别
+
+- `DEBUG`: 详细调试信息，包括所有工具调用参数
+- `INFO`: 一般信息，包括工具调用开始/完成
+- `WARNING`: 警告信息，如重试操作
+- `ERROR`: 错误信息，包括异常堆栈
+
+### 3. 性能指标监控
+
+#### 实时指标
+
+MCP会话提供以下实时指标：
+
+- **调用统计**：
+  - 总调用次数
+  - 错误次数和错误率
+  - 平均响应时间
+  - 调用频率（每秒调用数）
+
+- **工具统计**：
+  - 每个工具的调用次数
+  - 工具特定的错误率
+  - 工具响应时间统计（最小/最大/平均）
+
+- **健康指标**：
+  - 健康度评分（0-100）
+  - 最近5分钟活动统计
+  - 会话持续时间
+
+#### 获取指标
+
+```python
+# 获取完整指标
+metrics = mcp_session.get_metrics()
+print(f"总调用: {metrics['call_count']}")
+print(f"错误率: {metrics['error_rate']:.1f}%")
+print(f"健康度: {metrics['health_score']:.0f}%")
+
+# 获取简要摘要
+summary = mcp_session.get_metrics_summary()
+print(summary)  # "调用: 15 | 错误: 1 (6.7%) | 平均: 0.123s | 健康: 93%"
+
+# 获取最近调用记录
+recent_calls = mcp_session.metrics.get_recent_calls(limit=10)
+for call in recent_calls:
+    print(f"{call['tool_name']}: {call['duration']:.3f}s - {'成功' if call['success'] else '失败'}")
+```
+
+### 4. 故障排除
+
+#### 常见问题
+
+**1. MCP服务器启动失败**
+```
+McpSessionError: Failed to start MCP session
+```
+**解决方案**：
+- 检查MCP服务器路径是否正确
+- 确保Python环境可用
+- 查看详细日志：设置 `mcp_debug: true`
+
+**2. 工具调用超时**
+```
+McpTimeoutError: MCP operation timed out
+```
+**解决方案**：
+- 检查网络连接
+- 增加timeout配置值
+- 查看服务器负载
+
+**3. 高错误率**
+```
+健康度: 45% | 错误率: 15.2%
+```
+**解决方案**：
+- 检查MCP服务器状态
+- 查看错误日志确定具体问题
+- 考虑重启MCP会话
+
+#### 调试步骤
+
+1. **启用详细日志**：
+   ```json
+   {
+     "logging": {
+       "level": "DEBUG",
+       "mcp_debug": true
+     }
+   }
+   ```
+
+2. **查看日志文件**：
+   ```bash
+   tail -f mcp.log | grep "MCP tool"
+   ```
+
+3. **监控指标变化**：
+   ```python
+   # 在代码中添加指标监控
+   metrics = mcp_session.get_metrics()
+   if metrics['error_rate'] > 10:
+       logger.warning(f"高错误率: {metrics['error_rate']:.1f}%")
+   ```
+
+4. **检查工具可用性**：
+   ```python
+   tools = await mcp_session.get_available_tools()
+   print(f"可用工具: {[tool['name'] for tool in tools]}")
+   ```
+
+### 5. 性能优化建议
+
+#### 配置优化
+
+```json
+{
+  "transport": {
+    "mcp": {
+      "stdio_binary": "python3",  // 使用Python3
+      "args": ["--transport", "stdio", "--workers", "4"]  // 增加工作进程
+    }
+  },
+  "rate_limit": {
+    "requests_per_minute": 50,  // 根据服务器能力调整
+    "burst_size": 10
+  }
+}
+```
+
+#### 代码优化
+
+```python
+# 批量操作减少调用次数
+files = ["file1.txt", "file2.txt", "file3.txt"]
+result = await client.upload_to_shared_batch(files)  # 一次调用
+
+# 避免频繁的单个调用
+for file in files:
+    await client.upload_file(file, "/")  # 多次调用，效率低
+```
+
+#### 监控最佳实践
+
+1. **设置告警阈值**：
+   - 错误率 > 5% 时告警
+   - 响应时间 > 1秒 时告警
+   - 健康度 < 70% 时告警
+
+2. **定期检查指标**：
+   - 每小时检查一次健康度
+   - 每天分析错误日志
+   - 每周评估性能趋势
+
+3. **日志轮转**：
+   ```json
+   {
+     "logging": {
+       "file": "mcp.log",
+       "max_size": "10MB",
+       "backup_count": 5
+     }
+   }
+   ```
 
 ## 测试
 

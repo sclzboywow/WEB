@@ -23,6 +23,8 @@ from typing import Any, Dict, Optional, List
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from .mcp_metrics import McpMetrics
+
 logger = logging.getLogger(__name__)
 
 
@@ -86,7 +88,14 @@ class McpSession:
         self.env = os.environ.copy()
         self._setup_environment()
         
-        logger.info(f"McpSession initialized with entry: {self.entry_point}")
+        # Initialize metrics collection
+        self.metrics = McpMetrics()
+        
+        logger.info("McpSession initialized", extra={
+            "entry_point": self.entry_point,
+            "stdio_binary": self.stdio_binary,
+            "args": self.args
+        })
     
     def _setup_environment(self) -> None:
         """Setup environment variables for MCP subprocess."""
@@ -169,7 +178,13 @@ class McpSession:
             # Prepare command
             cmd = [self.stdio_binary, str(entry_path)] + self.args
             
-            logger.info(f"Starting MCP server: {' '.join(cmd)}")
+            start_time = time.time()
+            logger.info("Starting MCP server", extra={
+                "command": ' '.join(cmd),
+                "entry_path": str(entry_path),
+                "working_dir": str(entry_path.parent),
+                "timestamp": start_time
+            })
             
             # Start subprocess
             self._process = subprocess.Popen(
@@ -197,10 +212,21 @@ class McpSession:
             await self._session.initialize()
             
             self._is_started = True
-            logger.info("MCP session started successfully")
+            startup_duration = time.time() - start_time
+            logger.info("MCP session started successfully", extra={
+                "startup_duration": startup_duration,
+                "process_id": self._process.pid if self._process else None,
+                "timestamp": time.time()
+            })
             
         except Exception as e:
-            logger.error(f"Failed to start MCP session: {e}")
+            startup_duration = time.time() - start_time
+            logger.error("Failed to start MCP session", extra={
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "startup_duration": startup_duration,
+                "timestamp": time.time()
+            })
             await self.dispose()
             raise McpSessionError(f"Failed to start MCP session: {e}") from e
     
@@ -244,24 +270,75 @@ class McpSession:
             raise McpSessionNotStartedError("MCP session not started")
         
         start_time = time.time()
-        logger.info(f"Invoking MCP tool: {name}, args: {list(kwargs.keys())}")
+        params_count = len(kwargs)
+        
+        # Log tool invocation start
+        logger.info("MCP tool invocation started", extra={
+            "tool": name,
+            "params_count": params_count,
+            "params_keys": list(kwargs.keys()),
+            "timestamp": start_time
+        })
         
         try:
             # Call the tool
             result = await self._session.call_tool(name, kwargs)
             
             duration = time.time() - start_time
-            logger.info(f"MCP tool {name} completed in {duration:.2f}s")
+            result_size = len(str(result)) if result else 0
+            
+            # Record successful call metrics
+            self.metrics.record_call(
+                tool_name=name,
+                duration=duration,
+                success=True,
+                params_count=params_count,
+                result_size=result_size
+            )
+            
+            # Log successful completion
+            logger.info("MCP tool completed successfully", extra={
+                "tool": name,
+                "duration": duration,
+                "result_size": result_size,
+                "timestamp": time.time()
+            })
+            
             return result
             
         except Exception as e:
             duration = time.time() - start_time
-            logger.error(f"MCP tool {name} failed after {duration:.2f}s: {e}")
+            error_type = type(e).__name__
+            error_message = str(e)
+            
+            # Record failed call metrics
+            self.metrics.record_call(
+                tool_name=name,
+                duration=duration,
+                success=False,
+                error_type=error_type,
+                error_message=error_message,
+                params_count=params_count
+            )
+            
+            # Log error
+            logger.error("MCP tool failed", extra={
+                "tool": name,
+                "duration": duration,
+                "error_type": error_type,
+                "error_message": error_message,
+                "timestamp": time.time()
+            })
+            
             raise self._map_mcp_error(e)
     
     async def dispose(self) -> None:
         """Clean shutdown of MCP session."""
-        logger.info("Disposing MCP session")
+        dispose_start = time.time()
+        logger.info("Disposing MCP session", extra={
+            "timestamp": dispose_start,
+            "session_duration": dispose_start - self.metrics.session_start_time
+        })
         
         try:
             if self._exit_stack:
@@ -290,10 +367,26 @@ class McpSession:
             self._loop_thread = None
             self._is_started = False
             
-            logger.info("MCP session disposed successfully")
+            # Log final metrics
+            final_stats = self.metrics.get_stats()
+            dispose_duration = time.time() - dispose_start
+            
+            logger.info("MCP session disposed successfully", extra={
+                "dispose_duration": dispose_duration,
+                "total_calls": final_stats['call_count'],
+                "total_errors": final_stats['error_count'],
+                "error_rate": final_stats['error_rate'],
+                "avg_duration": final_stats['avg_duration'],
+                "session_duration": final_stats['session_duration'],
+                "timestamp": time.time()
+            })
             
         except Exception as e:
-            logger.error(f"Error disposing MCP session: {e}")
+            logger.error("Error disposing MCP session", extra={
+                "error": str(e),
+                "error_type": type(e).__name__,
+                "timestamp": time.time()
+            })
     
     def is_alive(self) -> bool:
         """
@@ -323,6 +416,24 @@ class McpSession:
         except Exception as e:
             logger.error(f"Failed to get available tools: {e}")
             raise McpSessionError(f"Failed to get available tools: {e}") from e
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """
+        Get current MCP session metrics.
+        
+        Returns:
+            Dictionary containing performance metrics and statistics
+        """
+        return self.metrics.get_stats()
+    
+    def get_metrics_summary(self) -> str:
+        """
+        Get a human-readable summary of current metrics.
+        
+        Returns:
+            String summary of current metrics
+        """
+        return self.metrics.get_summary()
     
     def get_session_info(self) -> Dict[str, Any]:
         """
